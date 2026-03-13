@@ -41,6 +41,11 @@ _src() { local p; p=$(verify-lib "$1" "$2") && . "$p" || exit 1; }
 _src /usr/lib/bwrap-common/bwrap-common.sh /usr/lib/bwrap-common/
 ```
 
+Or source directly:
+```sh
+. /usr/lib/bwrap-common/bwrap-common.sh
+```
+
 ### Wrapper pattern
 
 Typical GUI wrapper using high-level composites:
