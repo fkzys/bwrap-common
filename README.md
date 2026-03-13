@@ -161,4 +161,4 @@ When using filtered D-Bus, wrappers must call `bwrap_exec` instead of
 
 ## License
 
-GPL-3.0
+AGPL-3.0-or-later
