@@ -8,7 +8,7 @@
 #   _src() { local p; p=$(verify-lib "$1" "$2") && . "$p" || exit 1; }
 #   _src /usr/lib/bwrap-common/bwrap-common.sh /usr/lib/bwrap-common/
 
-VERSION="0.0.1"
+VERSION="0.0.3"
 
 [[ -n "${_BWRAP_COMMON_LOADED:-}" ]] && return 0
 _BWRAP_COMMON_LOADED=1
