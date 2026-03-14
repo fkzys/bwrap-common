@@ -1,5 +1,8 @@
 # bwrap-common
 
+[![CI](https://github.com/rpPH4kQocMjkm2Ve/bwrap-common/actions/workflows/ci.yml/badge.svg)](https://github.com/rpPH4kQocMjkm2Ve/bwrap-common/actions/workflows/ci.yml)
+![License](https://img.shields.io/github/license/rpPH4kQocMjkm2Ve/bwrap-common)
+
 Reusable bubblewrap sandbox helpers for shell wrappers. Each function
 takes an array variable name and appends bwrap arguments to it via nameref.
 
