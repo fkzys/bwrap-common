@@ -1,5 +1,16 @@
 name: CI
-on: [push, pull_request]
+
+on:
+  push:
+    paths:
+      - 'bwrap-common.sh'
+      - 'tests/**'
+      - '.github/workflows/ci.yml'
+  pull_request:
+    paths:
+      - 'bwrap-common.sh'
+      - 'tests/**'
+      - '.github/workflows/ci.yml'
 
 jobs:
   shellcheck:
