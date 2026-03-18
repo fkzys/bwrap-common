@@ -102,8 +102,7 @@ bwrap_exec "${A[@]}" -- /usr/bin/app "$@"
 | `bwrap_dbus_system` | System D-Bus socket |
 | `bwrap_dbus_filtered` | Filtered D-Bus via `xdg-dbus-proxy` with custom rules; falls back to unfiltered if proxy is unavailable |
 | `bwrap_dbus_common` | Pre-configured filtered D-Bus for typical GUI apps (XDG portals, notifications, status notifier, screen saver, login1, a11y); accepts extra rules |
-| `bwrap_themes` | GTK2/3, fontconfig, Qt, Kvantum, fonts, icons |
-| `bwrap_gtk_theme_env` | Set `GTK_THEME`, `GTK_ICON_THEME`, `XCURSOR_THEME` from host gsettings |
+| `bwrap_themes` | GTK2/3, dconf, fontconfig, Qt, Kvantum, fonts, icons |
 | `bwrap_fcitx` | fcitx5 input method sockets + env |
 | `bwrap_home_tmpfs` | tmpfs `$HOME` with XDG skeleton |
 | `bwrap_runtime_dir` | XDG_RUNTIME_DIR with correct permissions |
