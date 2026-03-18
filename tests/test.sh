@@ -43,7 +43,7 @@ FUNCTIONS=(
     bwrap_base bwrap_gpu bwrap_lib64 bwrap_resolv
     bwrap_wayland bwrap_x11 bwrap_audio
     bwrap_dbus_session bwrap_dbus_system bwrap_dbus_filtered bwrap_dbus_common
-    bwrap_themes bwrap_gtk_theme_env bwrap_fcitx
+    bwrap_themes bwrap_fcitx
     bwrap_home_tmpfs bwrap_runtime_dir bwrap_env_base
     bwrap_bind_dir bwrap_ro_bind_dir
     bwrap_hardened_malloc bwrap_no_hardened_malloc
