@@ -154,6 +154,7 @@ bwrap_themes() {
         "${HOME}/.config/qt6ct" \
         "${HOME}/.config/qt5ct" \
         "${HOME}/.config/gtk-3.0" \
+        "${HOME}/.config/gtk-4.0" \
         "${HOME}/.config/Kvantum" \
         "${HOME}/.local/share/fonts" \
         "${HOME}/.local/share/icons" \
