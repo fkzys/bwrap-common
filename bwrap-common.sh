@@ -248,9 +248,9 @@ bwrap_ro_bind_dir() {
 bwrap_hardened_malloc() {
     local -n _arr=$1
     local _variant="${2:-light}"
-    local _lib="/usr/local/lib/libhardened_malloc.so"
+    local _lib="/usr/lib/libhardened_malloc.so"
     if [[ "$_variant" == "light" ]]; then
-        _lib="/usr/local/lib/libhardened_malloc-light.so"
+        _lib="/usr/lib/libhardened_malloc-light.so"
     fi
     [[ -f "$_lib" ]] && _arr+=(--setenv LD_PRELOAD "$_lib")
     :
