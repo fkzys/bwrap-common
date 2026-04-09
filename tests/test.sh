@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -uo pipefail
+# Note: no -e. Tests must continue running when assertions fail
+# so failures can be counted and reported.
 
 # ── Test harness ─────────────────────────────────────────────
 
