@@ -1,8 +1,8 @@
 # bwrap-common
 
-[![CI](https://github.com/rpPH4kQocMjkm2Ve/bwrap-common/actions/workflows/ci.yml/badge.svg)](https://github.com/rpPH4kQocMjkm2Ve/bwrap-common/actions/workflows/ci.yml)
-![License](https://img.shields.io/github/license/rpPH4kQocMjkm2Ve/bwrap-common)
-[![Spec](https://img.shields.io/endpoint?url=https://gitlab.com/fkzys/specs/-/raw/main/version.json&maxAge=300)](https://gitlab.com/fkzys/specs)
+[![CI](https://github.com/fkzys/bwrap-common/actions/workflows/ci.yml/badge.svg)](https://github.com/fkzys/bwrap-common/actions/workflows/ci.yml)
+![License](https://img.shields.io/github/license/fkzys/bwrap-common)
+[![Spec](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/fkzys/specs/refs/heads/main/version.json&maxAge=300)](https://github.com/fkzys/specs)
 
 Reusable bubblewrap sandbox helpers for shell wrappers. Each function
 takes an array variable name and appends bwrap arguments to it via nameref.
@@ -35,7 +35,7 @@ sudo make uninstall
 
 ## Usage
 
-Source with [verify-lib](https://gitlab.com/fkzys/verify-lib) to validate
+Source with [verify-lib](https://github.com/fkzys/verify-lib) to validate
 ownership and permissions before loading:
 
 ```sh
@@ -153,7 +153,7 @@ When using filtered D-Bus, wrappers must call `bwrap_exec` instead of
 
 - `bubblewrap` (`bwrap`)
 - `bash`
-- [verify-lib](https://gitlab.com/fkzys/verify-lib) (recommended, for integrity verification before sourcing)
+- [verify-lib](https://github.com/fkzys/verify-lib) (recommended, for integrity verification before sourcing)
 - `xdg-dbus-proxy` (optional, for filtered D-Bus)
 
 ## Files
