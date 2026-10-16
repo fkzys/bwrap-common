@@ -156,6 +156,7 @@ When using filtered D-Bus, wrappers must call `bwrap_exec` instead of
 - [verify-lib](https://github.com/fkzys/verify-lib) (recommended, for integrity verification before sourcing)
 - `xdg-dbus-proxy` (optional, for filtered D-Bus)
 
+- [hardened_malloc](https://github.com/fkzys/hardened_malloc) (optional)
 ## Files
 
 | Path | Purpose |
