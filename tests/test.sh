@@ -173,8 +173,14 @@ section "bwrap_no_hardened_malloc"
 
 G=()
 bwrap_no_hardened_malloc G
-has_pair G "--unsetenv" "LD_PRELOAD"                      && ok "--unsetenv LD_PRELOAD present"          || fail "--unsetenv LD_PRELOAD missing"
-has_triple G "--ro-bind" "/dev/null" "/etc/ld.so.preload"  && ok "/dev/null → /etc/ld.so.preload bind"   || fail "/dev/null bind missing"
+if [[ -f /usr/lib/libhardened_malloc.so.empty ]]; then
+    has_triple G "--ro-bind" "/usr/lib/libhardened_malloc.so.empty" "/usr/lib/libhardened_malloc-light.so" \
+        && ok "stub bind (light variant) present" || fail "stub bind (light variant) missing"
+    has_triple G "--ro-bind" "/usr/lib/libhardened_malloc.so.empty" "/usr/lib/libhardened_malloc.so" \
+        && ok "stub bind (default variant) present" || fail "stub bind (default variant) missing"
+else
+    ok "stub binds skipped (libhardened_malloc.so.empty not installed)"
+fi
 
 # ── bwrap_runtime_dir ───────────────────────────────────────
 
@@ -271,7 +277,12 @@ has_arg R "--unshare-all"  && ok "--unshare-all present"      || fail "--unshare
 
 S=()
 bwrap_gui_finish S wayland no no none
-has_pair S "--unsetenv" "LD_PRELOAD" && ok "no-malloc sets --unsetenv LD_PRELOAD" || fail "--unsetenv LD_PRELOAD missing"
+if [[ -f /usr/lib/libhardened_malloc.so.empty ]]; then
+    has_triple S "--ro-bind" "/usr/lib/libhardened_malloc.so.empty" "/usr/lib/libhardened_malloc.so" \
+        && ok "malloc=no masks hardened_malloc with stub" || fail "malloc=no stub bind missing"
+else
+    ok "malloc=no stub bind skipped (libhardened_malloc.so.empty not installed)"
+fi
 
 # ── bwrap_ssh_agent ─────────────────────────────────────────
 

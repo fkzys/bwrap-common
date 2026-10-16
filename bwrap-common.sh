@@ -258,8 +258,13 @@ bwrap_hardened_malloc() {
 
 bwrap_no_hardened_malloc() {
     local -n _arr=$1
-    _arr+=(--unsetenv LD_PRELOAD
-           --ro-bind /dev/null /etc/ld.so.preload)
+    local _stub="/usr/lib/libhardened_malloc.so.empty"
+    local _variant
+    [[ -f "$_stub" ]] || return 0
+    for _variant in /usr/lib/libhardened_malloc-light.so /usr/lib/libhardened_malloc.so; do
+        [[ -e "$_variant" ]] && _arr+=(--ro-bind "$_stub" "$_variant")
+    done
+    :
 }
 
 # ── Common sandbox flags ─────────────────────────────────────
