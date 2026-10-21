@@ -129,7 +129,7 @@ bwrap_exec "${A[@]}" -- /usr/bin/app "$@"
 
 - `$1` — array name to append bwrap arguments to (required)
 - `$2` — network: `yes`/`no` (default `no`); `yes` adds the resolv.conf bind
-- `$3` — GPU: `yes`/`no` (default `yes`); `yes` exposes the DRI/NVIDIA device nodes, `no` omits them. GPU exposure expands the attack surface so it must be omitted when possible..
+- `$3` — GPU: `yes`/`no` (default `yes`); `yes` exposes the DRI/NVIDIA device nodes, `no` omits them. GPU exposure expands the attack surface so it must be omitted when possible.
 
 ### D-Bus filtering
 
