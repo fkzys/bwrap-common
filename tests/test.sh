@@ -13,12 +13,14 @@ ok() {
     PASS=$((PASS + 1))
     TESTS=$((TESTS + 1))
     echo "  ✓ $1"
+    return 0
 }
 
 fail() {
     FAIL=$((FAIL + 1))
     TESTS=$((TESTS + 1))
     echo "  ✗ $1"
+    return 0
 }
 
 section() {
@@ -63,6 +65,16 @@ count_flag() {
     local -n _arr=$1; local flag=$2; local count=0
     for arg in "${_arr[@]}"; do [[ "$arg" == "$flag" ]] && count=$((count + 1)); done
     echo "$count"
+}
+
+arrays_equal() {
+    local -n _a=$1; local -n _b=$2
+    [[ ${#_a[@]} -eq ${#_b[@]} ]] || return 1
+    local i
+    for ((i = 0; i < ${#_a[@]}; i++)); do
+        [[ "${_a[$i]}" == "${_b[$i]}" ]] || return 1
+    done
+    return 0
 }
 
 # ── Source ──────────────────────────────────────────────────
@@ -270,12 +282,18 @@ ok "bwrap_gui_setup with x11=yes runs without error"
 
 section "bwrap_gui_setup (gpu toggle)"
 
-GPU_REF=()
-bwrap_gpu GPU_REF
-gpu_paths=()
-for ((i = 0; i < ${#GPU_REF[@]} - 1; i++)); do
-    [[ "${GPU_REF[$i]}" == "--dev-bind" ]] && gpu_paths+=("${GPU_REF[$((i + 1))]}")
-done
+EXPECT_GPU_YES=()
+bwrap_base EXPECT_GPU_YES
+bwrap_lib64 EXPECT_GPU_YES
+bwrap_gpu EXPECT_GPU_YES
+bwrap_runtime_dir EXPECT_GPU_YES
+bwrap_home_tmpfs EXPECT_GPU_YES
+
+EXPECT_GPU_NO=()
+bwrap_base EXPECT_GPU_NO
+bwrap_lib64 EXPECT_GPU_NO
+bwrap_runtime_dir EXPECT_GPU_NO
+bwrap_home_tmpfs EXPECT_GPU_NO
 
 SETUP_GPU_YES=()
 bwrap_gui_setup SETUP_GPU_YES no yes
@@ -284,24 +302,22 @@ bwrap_gui_setup SETUP_GPU_NO no no
 SETUP_GPU_DEFAULT=()
 bwrap_gui_setup SETUP_GPU_DEFAULT no
 
-[[ "${SETUP_GPU_DEFAULT[*]}" == "${SETUP_GPU_YES[*]}" ]] \
-    && ok "default gpu argument matches gpu=yes" \
-    || fail "default gpu argument differs from gpu=yes"
-
-if [[ ${#gpu_paths[@]} -eq 0 ]]; then
-    ok "GPU bind assertions skipped (no GPU devices on host)"
+if arrays_equal SETUP_GPU_DEFAULT SETUP_GPU_YES; then
+    ok "default gpu argument matches gpu=yes"
 else
-    gpu_yes_missing=0
-    for p in "${gpu_paths[@]}"; do
-        has_pair SETUP_GPU_YES "--dev-bind" "$p" || gpu_yes_missing=1
-    done
-    [[ $gpu_yes_missing -eq 0 ]] && ok "gpu=yes includes GPU device binds" || fail "gpu=yes missing GPU device binds"
+    fail "default gpu argument differs from gpu=yes"
+fi
 
-    gpu_no_present=0
-    for p in "${gpu_paths[@]}"; do
-        has_pair SETUP_GPU_NO "--dev-bind" "$p" && gpu_no_present=1
-    done
-    [[ $gpu_no_present -eq 0 ]] && ok "gpu=no excludes GPU device binds" || fail "gpu=no still binds GPU devices"
+if arrays_equal SETUP_GPU_YES EXPECT_GPU_YES; then
+    ok "gpu=yes emits base+lib64+gpu+runtime_dir+home_tmpfs"
+else
+    fail "gpu=yes output differs from expected composition"
+fi
+
+if arrays_equal SETUP_GPU_NO EXPECT_GPU_NO; then
+    ok "gpu=no emits base+lib64+runtime_dir+home_tmpfs without GPU resources"
+else
+    fail "gpu=no leaks GPU resources"
 fi
 
 # ── bwrap_gui_setup (net/gpu independence) ───────────────────
@@ -311,19 +327,54 @@ section "bwrap_gui_setup (net/gpu independence)"
 RESOLV_REF=()
 bwrap_resolv RESOLV_REF
 
+EXPECT_NET_YES=()
+bwrap_base EXPECT_NET_YES
+bwrap_lib64 EXPECT_NET_YES
+bwrap_resolv EXPECT_NET_YES
+bwrap_runtime_dir EXPECT_NET_YES
+bwrap_home_tmpfs EXPECT_NET_YES
+
+EXPECT_NET_NO=()
+bwrap_base EXPECT_NET_NO
+bwrap_lib64 EXPECT_NET_NO
+bwrap_runtime_dir EXPECT_NET_NO
+bwrap_home_tmpfs EXPECT_NET_NO
+
+EXPECT_NET_GPU_YES=()
+bwrap_base EXPECT_NET_GPU_YES
+bwrap_lib64 EXPECT_NET_GPU_YES
+bwrap_gpu EXPECT_NET_GPU_YES
+bwrap_resolv EXPECT_NET_GPU_YES
+bwrap_runtime_dir EXPECT_NET_GPU_YES
+bwrap_home_tmpfs EXPECT_NET_GPU_YES
+
 SETUP_NET_YES=()
 bwrap_gui_setup SETUP_NET_YES yes no
 SETUP_NET_NO=()
 bwrap_gui_setup SETUP_NET_NO no no
+SETUP_NET_GPU_YES=()
+bwrap_gui_setup SETUP_NET_GPU_YES yes yes
+
+if arrays_equal SETUP_NET_NO EXPECT_NET_NO; then
+    ok "net=no emits base+lib64+runtime_dir+home_tmpfs without resolv"
+else
+    fail "net=no output differs from expected composition"
+fi
 
 if [[ ${#RESOLV_REF[@]} -ge 2 ]]; then
-    resolv_dir="${RESOLV_REF[1]}"
-    has_pair SETUP_NET_YES "--ro-bind" "$resolv_dir" \
-        && ok "net=yes adds resolv bind" || fail "net=yes missing resolv bind"
-    has_pair SETUP_NET_NO "--ro-bind" "$resolv_dir" \
-        && fail "net=no should not add resolv bind" || ok "net=no omits resolv bind"
+    if arrays_equal SETUP_NET_YES EXPECT_NET_YES; then
+        ok "net=yes emits base+lib64+resolv+runtime_dir+home_tmpfs"
+    else
+        fail "net=yes output differs from expected composition"
+    fi
+    if arrays_equal SETUP_NET_GPU_YES EXPECT_NET_GPU_YES; then
+        ok "net=yes gpu=yes emits base+lib64+gpu+resolv+runtime_dir+home_tmpfs"
+    else
+        fail "net=yes gpu=yes output differs from expected composition"
+    fi
 else
-    ok "resolv assertions skipped (/etc/resolv.conf is not a symlink)"
+    ok "resolv assertion skipped (/etc/resolv.conf is not a symlink)"
+    ok "net=yes gpu=yes resolv assertion skipped (/etc/resolv.conf is not a symlink)"
 fi
 
 # ── bwrap_gui_finish ────────────────────────────────────────
