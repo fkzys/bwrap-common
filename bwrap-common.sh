@@ -304,11 +304,13 @@ bwrap_ssh_agent() {
 }
 
 # ── Standard GUI sandbox: setup phase ─────────────────────────
+# $2 = network: "yes" or "no" (default "no")
+# $3 = GPU: "yes" or "no" (default "yes")
 bwrap_gui_setup() {
-    local _v=$1 _net="${2:-no}"
+    local _v=$1 _net="${2:-no}" _gpu="${3:-yes}"
     bwrap_base "$_v"
     bwrap_lib64 "$_v"
-    bwrap_gpu "$_v"
+    [[ "$_gpu" == "yes" ]] && bwrap_gpu "$_v"
     [[ "$_net" == "yes" ]] && bwrap_resolv "$_v"
     bwrap_runtime_dir "$_v"
     bwrap_home_tmpfs "$_v"

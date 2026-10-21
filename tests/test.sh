@@ -266,6 +266,66 @@ Q=()
 bwrap_gui_setup Q yes
 ok "bwrap_gui_setup with x11=yes runs without error"
 
+# ── bwrap_gui_setup (gpu toggle) ─────────────────────────────
+
+section "bwrap_gui_setup (gpu toggle)"
+
+GPU_REF=()
+bwrap_gpu GPU_REF
+gpu_paths=()
+for ((i = 0; i < ${#GPU_REF[@]} - 1; i++)); do
+    [[ "${GPU_REF[$i]}" == "--dev-bind" ]] && gpu_paths+=("${GPU_REF[$((i + 1))]}")
+done
+
+SETUP_GPU_YES=()
+bwrap_gui_setup SETUP_GPU_YES no yes
+SETUP_GPU_NO=()
+bwrap_gui_setup SETUP_GPU_NO no no
+SETUP_GPU_DEFAULT=()
+bwrap_gui_setup SETUP_GPU_DEFAULT no
+
+[[ "${SETUP_GPU_DEFAULT[*]}" == "${SETUP_GPU_YES[*]}" ]] \
+    && ok "default gpu argument matches gpu=yes" \
+    || fail "default gpu argument differs from gpu=yes"
+
+if [[ ${#gpu_paths[@]} -eq 0 ]]; then
+    ok "GPU bind assertions skipped (no GPU devices on host)"
+else
+    gpu_yes_missing=0
+    for p in "${gpu_paths[@]}"; do
+        has_pair SETUP_GPU_YES "--dev-bind" "$p" || gpu_yes_missing=1
+    done
+    [[ $gpu_yes_missing -eq 0 ]] && ok "gpu=yes includes GPU device binds" || fail "gpu=yes missing GPU device binds"
+
+    gpu_no_present=0
+    for p in "${gpu_paths[@]}"; do
+        has_pair SETUP_GPU_NO "--dev-bind" "$p" && gpu_no_present=1
+    done
+    [[ $gpu_no_present -eq 0 ]] && ok "gpu=no excludes GPU device binds" || fail "gpu=no still binds GPU devices"
+fi
+
+# ── bwrap_gui_setup (net/gpu independence) ───────────────────
+
+section "bwrap_gui_setup (net/gpu independence)"
+
+RESOLV_REF=()
+bwrap_resolv RESOLV_REF
+
+SETUP_NET_YES=()
+bwrap_gui_setup SETUP_NET_YES yes no
+SETUP_NET_NO=()
+bwrap_gui_setup SETUP_NET_NO no no
+
+if [[ ${#RESOLV_REF[@]} -ge 2 ]]; then
+    resolv_dir="${RESOLV_REF[1]}"
+    has_pair SETUP_NET_YES "--ro-bind" "$resolv_dir" \
+        && ok "net=yes adds resolv bind" || fail "net=yes missing resolv bind"
+    has_pair SETUP_NET_NO "--ro-bind" "$resolv_dir" \
+        && fail "net=no should not add resolv bind" || ok "net=no omits resolv bind"
+else
+    ok "resolv assertions skipped (/etc/resolv.conf is not a symlink)"
+fi
+
 # ── bwrap_gui_finish ────────────────────────────────────────
 
 section "bwrap_gui_finish"
