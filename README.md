@@ -56,7 +56,7 @@ Typical GUI wrapper using high-level composites:
 
 ```sh
 A=()
-bwrap_gui_setup A yes                    # yes = network (adds resolv)
+bwrap_gui_setup A yes yes                # yes = network (adds resolv), yes = gpu
 bwrap_bind_dir A "${HOME}/.config/app" "${HOME}/Data"
 bwrap_ro_bind_dir A "${MEDIA_DIR}"
 bwrap_audio A
@@ -122,8 +122,14 @@ bwrap_exec "${A[@]}" -- /usr/bin/app "$@"
 
 | Function | Purpose |
 |---|---|
-| `bwrap_gui_setup` | `bwrap_base` + `lib64` + `gpu` + optional `resolv` + `runtime_dir` + `home_tmpfs` |
+| `bwrap_gui_setup` | `bwrap_base` + `lib64` + optional `gpu` + optional `resolv` + `runtime_dir` + `home_tmpfs` |
 | `bwrap_gui_finish` | `themes` + `wayland`/`x11` + D-Bus (`unfiltered`/`filtered`/`none`) + `env_base` + malloc + `sandbox` |
+
+`bwrap_gui_setup` parameters:
+
+- `$1` — array name to append bwrap arguments to (required)
+- `$2` — network: `yes`/`no` (default `no`); `yes` adds the resolv.conf bind
+- `$3` — GPU: `yes`/`no` (default `yes`); `yes` exposes the DRI/NVIDIA device nodes, `no` omits them. GPU exposure expands the attack surface so it must be omitted when possible.
 
 ### D-Bus filtering
 

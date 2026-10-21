@@ -4,7 +4,7 @@
 
 | File | Language | Framework | What it tests |
 |------|----------|-----------|---------------|
-| `tests/test.sh` | Bash | Custom assertions | Source guard (re-source idempotency), function definitions (all 27 public functions exist), VERSION variable, `bwrap_base` (non-empty output, `--ro-bind /usr`, `--proc /proc`, `--tmpfs /tmp`), `bwrap_home_tmpfs` (`--tmpfs $HOME`, `--dir ~/.config`), `bwrap_env_base` (HOME/PATH/XDG_RUNTIME_DIR env vars), `bwrap_sandbox` (`--unshare-all`, `--die-with-parent`, `--new-session`, network/new-session toggles), `bwrap_no_hardened_malloc` (stub `/usr/lib/libhardened_malloc.so.empty` bound over both hardened_malloc variants when installed), `bwrap_runtime_dir` (XDG_RUNTIME_DIR directory creation), `bwrap_gpu`/`bwrap_lib64` (no-error execution, non-empty output), `bwrap_bind_dir` (directory creation, `--bind` flags, multiple dirs), `bwrap_ro_bind_dir` (existing dir bound, nonexistent dir skipped), `require_dir` (existing dir passes, missing dir fails), `bwrap_fcitx` (QT_IM_MODULE/XMODIFIERS env vars), `bwrap_gui_setup` (composite: base + home_tmpfs, with/without network), `bwrap_gui_finish` (composite: sandbox flags, malloc=no variant, dbus modes), `bwrap_ssh_agent` (empty without SSH_AUTH_SOCK), `bwrap_dbus_system` (no-error execution) |
+| `tests/test.sh` | Bash | Custom assertions | Source guard (re-source idempotency), function definitions (all 27 public functions exist), VERSION variable, `bwrap_base` (non-empty output, `--ro-bind /usr`, `--proc /proc`, `--tmpfs /tmp`), `bwrap_home_tmpfs` (`--tmpfs $HOME`, `--dir ~/.config`), `bwrap_env_base` (HOME/PATH/XDG_RUNTIME_DIR env vars), `bwrap_sandbox` (`--unshare-all`, `--die-with-parent`, `--new-session`, network/new-session toggles), `bwrap_no_hardened_malloc` (stub `/usr/lib/libhardened_malloc.so.empty` bound over both hardened_malloc variants when installed), `bwrap_runtime_dir` (XDG_RUNTIME_DIR directory creation), `bwrap_gpu`/`bwrap_lib64` (no-error execution, non-empty output), `bwrap_bind_dir` (directory creation, `--bind` flags, multiple dirs), `bwrap_ro_bind_dir` (existing dir bound, nonexistent dir skipped), `require_dir` (existing dir passes, missing dir fails), `bwrap_fcitx` (QT_IM_MODULE/XMODIFIERS env vars), `bwrap_gui_setup` (composite: base + home_tmpfs, with/without network, GPU toggle, exact composition), `bwrap_gui_finish` (composite: sandbox flags, malloc=no variant, dbus modes), `bwrap_ssh_agent` (empty without SSH_AUTH_SOCK), `bwrap_dbus_system` (no-error execution) |
 
 ## Running
 
@@ -19,8 +19,8 @@ bash tests/test.sh
 
 The test script provides a minimal assertion framework and array inspection helpers:
 
-- **Assertion functions**: `ok`/`fail`
-- **Array helpers**: `has_arg` (flag present), `has_pair` (consecutive flag + value), `has_triple` (three consecutive values), `count_flag` (count occurrences of a flag)
+- **Assertion functions**: `ok`/`fail` — both always exit 0, so `cond && ok "..." || fail "..."` stays unambiguous even if writing the message to stdout fails
+- **Array helpers**: `has_arg` (flag present), `has_pair` (consecutive flag + value), `has_triple` (three consecutive values), `count_flag` (count occurrences of a flag), `arrays_equal` (exact element-wise comparison of two arrays)
 - **Section headers**: `section` for grouping related tests
 - **Summary**: final pass/fail counts; exits non-zero if any test failed
 
@@ -56,7 +56,7 @@ Each function is called with a fresh empty array, then the array contents are in
 
 ### Composite function tests
 
-- **`bwrap_gui_setup`**: calls `bwrap_base` + `bwrap_lib64` + `bwrap_gpu` + `bwrap_runtime_dir` + `bwrap_home_tmpfs` internally; tests verify the combined output contains base binds and home tmpfs
+- **`bwrap_gui_setup`**: calls `bwrap_base` + `bwrap_lib64` + optional `bwrap_gpu` + optional `bwrap_resolv` + `bwrap_runtime_dir` + `bwrap_home_tmpfs` internally; `bwrap_gpu` is only called when the GPU argument is `yes` (default). The tests compare the generated argument array against the expected composition rebuilt from the same helpers: the default GPU argument matches an explicit `gpu=yes` call, `gpu=yes` equals `base+lib64+gpu+runtime_dir+home_tmpfs`, `gpu=no` equals that composition with no GPU resource at all, and the network toggle is independent of it — `net=yes` adds the resolv bind while `net=no` omits it. The combined `net=yes gpu=yes` call is checked as well and must equal `base+lib64+gpu+resolv+runtime_dir+home_tmpfs`. Because the expectation is rebuilt from the helpers rather than from a fixed list of device paths, the assertions hold on hosts with and without GPU devices and catch any resource `bwrap_gpu` may expose in the future; only the resolv checks are skipped when `/etc/resolv.conf` is not a symlink.
 - **`bwrap_gui_finish`**: calls themes + display + dbus + env + malloc + sandbox internally; tests verify `--unshare-all` presence and, when `malloc=no`, that the hardened_malloc stub is bound (skipped when the stub is not installed)
 
 ## CI
