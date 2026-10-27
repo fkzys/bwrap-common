@@ -459,7 +459,7 @@ bwrap_exec() {
 
     local _bwrap_pid _rc=0
 
-    bwrap "$@" &
+    bwrap "$@" <&0 &
     _bwrap_pid=$!
 
     _bwrap_on_signal() {
