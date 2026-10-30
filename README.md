@@ -128,7 +128,7 @@ bwrap_exec "${A[@]}" -- /usr/bin/app "$@"
 | Function | Purpose |
 |---|---|
 | `bwrap_gui_setup` | `bwrap_base` + `lib64` + optional `gpu` + optional `resolv` + `runtime_dir` + `home_tmpfs` |
-| `bwrap_gui_finish` | `themes` + `wayland`/`x11` + D-Bus (`unfiltered`/`filtered`/`none`) + `env_base` + malloc + seccomp + `sandbox` |
+| `bwrap_gui_finish` | `themes` + `wayland`/`x11` + D-Bus (`filtered` by default; `unfiltered`/`none` opt-out) + `env_base` + malloc + seccomp + `sandbox` |
 
 `bwrap_gui_setup` parameters:
 
@@ -148,10 +148,11 @@ caller already has an `EXIT` trap, it is preserved: cleanup runs first, then
 the original trap, and the shell exit status is preserved. `exec bwrap`
 bypasses shell traps, so use `bwrap_exec` with filtered D-Bus.
 
-If `xdg-dbus-proxy` is not installed, `bwrap_dbus_filtered` and
-`bwrap_dbus_common` return non-zero and do not fall back to an unfiltered
-bus; `bwrap_gui_finish` propagates that failure. Use `dbus=none` to run
-without D-Bus, or `unfiltered` to opt into the unfiltered bus explicitly.
+Filtered D-Bus is the default for `bwrap_gui_finish`. If `xdg-dbus-proxy` is
+not installed, `bwrap_dbus_filtered` and `bwrap_dbus_common` return non-zero
+and do not fall back to an unfiltered bus; `bwrap_gui_finish` propagates that
+failure. Use `dbus=none` to run without D-Bus, or `unfiltered` to opt into the
+unfiltered bus explicitly.
 If no session bus is available, filtered mode is skipped because there is
 nothing to proxy.
 
@@ -169,7 +170,7 @@ Extra `--talk`/`--own` rules can be appended per-app.
 - `$2` — display: `wayland`/`x11` (default `wayland`)
 - `$3` — network: `yes`/`no` (default `no`); `yes` adds `--share-net`
 - `$4` — malloc variant: `default`/`light`/`no`
-- `$5` — D-Bus mode: `unfiltered` (default), `filtered`, `none`; `filtered` returns non-zero if `xdg-dbus-proxy` is unavailable
+- `$5` — D-Bus mode: `filtered` (default), `unfiltered`, `none`; `filtered` returns non-zero if `xdg-dbus-proxy` is unavailable
 - `$6` — themes: `yes`/`no` (default `yes`)
 - `$7` — seccomp: `default`/`none` (default `default`); `default` returns non-zero if the filter blob is unavailable; use `bwrap_seccomp` directly for an allowlist
 
@@ -248,7 +249,7 @@ The allowlist cache key is
 - `libseccomp` (runtime, for the seccomp helper)
 - `gcc` + `libseccomp` headers (build-time, for `make build`/`make install`)
 - [verify-lib](https://github.com/fkzys/verify-lib) (recommended, for integrity verification before sourcing)
-- `xdg-dbus-proxy` (required for `filtered` D-Bus; optional otherwise)
+- `xdg-dbus-proxy` (required for the default `filtered` D-Bus mode; optional with `dbus=none`/`unfiltered`)
 
 - [hardened_malloc](https://github.com/fkzys/hardened_malloc) (optional)
 ## Files

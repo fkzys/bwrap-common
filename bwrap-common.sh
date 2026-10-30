@@ -512,11 +512,11 @@ bwrap_gui_setup() {
 
 # ── Standard GUI sandbox: finish phase ────────────────────────
 # $4 = malloc variant (default/light/no)
-# $5 = dbus mode: "unfiltered", "filtered", or "none"
+# $5 = dbus mode: "filtered" (default), "unfiltered", or "none"
 # $6 = themes: "yes" or "no"
 # $7 = seccomp: "default" or "none" (allowlists go through bwrap_seccomp)
 bwrap_gui_finish() {
-    local _v=$1 _display="${2:-wayland}" _net="${3:-no}" _malloc="${4:-default}" _dbus="${5:-unfiltered}" _themes="${6:-yes}" _seccomp="${7:-default}"
+    local _v=$1 _display="${2:-wayland}" _net="${3:-no}" _malloc="${4:-default}" _dbus="${5:-filtered}" _themes="${6:-yes}" _seccomp="${7:-default}"
     [[ "$_themes" == "yes" ]] && bwrap_themes "$_v"
     if [[ "$_display" == "x11" ]]; then
         bwrap_x11 "$_v"

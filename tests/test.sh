@@ -638,6 +638,13 @@ DGF_RC=$?
 has_arg DGF "${XDG_RUNTIME_DIR}/bus" && fail "failed dbus=filtered bound the bus socket" || ok "failed dbus=filtered appends no bus bind"
 has_arg DGF "DBUS_SESSION_BUS_ADDRESS" && fail "failed dbus=filtered set the bus address" || ok "failed dbus=filtered appends no bus env"
 
+DGD=()
+PATH="$EMPTY_PATH" DBUS_SESSION_BUS_ADDRESS="$NO_PROXY_ADDR" bwrap_gui_finish DGD wayland no default 2>/dev/null
+DGD_RC=$?
+[[ $DGD_RC -eq 1 ]] && ok "dbus defaults to filtered when the mode is omitted" || fail "default dbus mode returned $DGD_RC"
+has_arg DGD "${XDG_RUNTIME_DIR}/bus" && fail "default dbus mode bound the bus socket" || ok "default dbus mode appends no bus bind"
+has_arg DGD "DBUS_SESSION_BUS_ADDRESS" && fail "default dbus mode set the bus address" || ok "default dbus mode appends no bus env"
+
 DGN=()
 PATH="$EMPTY_PATH" DBUS_SESSION_BUS_ADDRESS="$NO_PROXY_ADDR" bwrap_gui_finish DGN wayland no default none no none 2>/dev/null
 DGN_RC=$?
