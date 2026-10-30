@@ -86,6 +86,35 @@ arrays_equal() {
 TMPDIR_TEST=$(mktemp -d)
 trap 'rm -rf "$TMPDIR_TEST"' EXIT
 
+# ── seccomp fixtures ────────────────────────────────────────
+
+SECCOMP_ARCH=$(uname -m)
+case "$SECCOMP_ARCH" in
+    x86_64)               SECCOMP_MAGIC="3e0000c0" ;;
+    aarch64)              SECCOMP_MAGIC="b70000c0" ;;
+    i386|i486|i586|i686)  SECCOMP_MAGIC="03000040" ;;
+    armv6l|armv7l|armv8l) SECCOMP_MAGIC="28000040" ;;
+    riscv64)              SECCOMP_MAGIC="f30000c0" ;;
+    ppc64le)              SECCOMP_MAGIC="150000c0" ;;
+    s390x)                SECCOMP_MAGIC="16000080" ;;
+    loongarch64)          SECCOMP_MAGIC="020100c0" ;;
+    *)                    SECCOMP_MAGIC="00000000" ;;
+esac
+
+write_fake_blob() {
+    local _file=$1 _magic=$2
+    printf '\x20\x00\x00\x00\x04\x00\x00\x00\x15\x00\x00\x01' > "$_file"
+    printf '%b' "\\x${_magic:0:2}\\x${_magic:2:2}\\x${_magic:4:2}\\x${_magic:6:2}" >> "$_file"
+}
+
+SECCOMP_FIXTURE_DIR="${TMPDIR_TEST}/seccomp"
+mkdir -p "$SECCOMP_FIXTURE_DIR"
+SECCOMP_FIXTURE_BLOB="${SECCOMP_FIXTURE_DIR}/default.${SECCOMP_ARCH}.bpf"
+write_fake_blob "$SECCOMP_FIXTURE_BLOB" "$SECCOMP_MAGIC"
+
+export BWRAP_SECCOMP_DIR="$SECCOMP_FIXTURE_DIR"
+export BWRAP_SECCOMP_CACHE_DIR="${TMPDIR_TEST}/seccomp-cache"
+
 # ── Guard re-source ─────────────────────────────────────────
 
 section "Source guard"
@@ -105,7 +134,7 @@ FUNCTIONS=(
     bwrap_home_tmpfs bwrap_runtime_dir bwrap_env_base
     bwrap_bind_dir bwrap_ro_bind_dir
     bwrap_hardened_malloc bwrap_no_hardened_malloc
-    bwrap_sandbox bwrap_ssh_agent
+    bwrap_sandbox bwrap_seccomp bwrap_ssh_agent
     bwrap_resolve_files
     bwrap_gui_setup bwrap_gui_finish
     bwrap_exec
@@ -302,10 +331,10 @@ bwrap_gui_setup SETUP_GPU_NO no no
 SETUP_GPU_DEFAULT=()
 bwrap_gui_setup SETUP_GPU_DEFAULT no
 
-if arrays_equal SETUP_GPU_DEFAULT SETUP_GPU_YES; then
-    ok "default gpu argument matches gpu=yes"
+if arrays_equal SETUP_GPU_DEFAULT SETUP_GPU_NO; then
+    ok "default gpu argument matches gpu=no"
 else
-    fail "default gpu argument differs from gpu=yes"
+    fail "default gpu argument differs from gpu=no"
 fi
 
 if arrays_equal SETUP_GPU_YES EXPECT_GPU_YES; then
@@ -395,6 +424,154 @@ else
     ok "malloc=no stub bind skipped (libhardened_malloc.so.empty not installed)"
 fi
 
+# ── bwrap_gui_finish (seccomp) ──────────────────────────────
+
+section "bwrap_gui_finish (seccomp)"
+
+SN=()
+bwrap_gui_finish SN wayland no default unfiltered no default
+SN_RC=$?
+[[ $SN_RC -eq 0 ]] && ok "seccomp=default returns 0" || fail "seccomp=default returned $SN_RC"
+has_arg SN "--seccomp" && ok "seccomp=default appends --seccomp" || fail "seccomp=default missing --seccomp"
+
+SO=()
+bwrap_gui_finish SO wayland no default unfiltered no none
+SO_RC=$?
+[[ $SO_RC -eq 0 ]] && ok "seccomp=none returns 0" || fail "seccomp=none returned $SO_RC"
+has_arg SO "--seccomp" && fail "seccomp=none appended --seccomp" || ok "seccomp=none appends nothing"
+
+SP=()
+bwrap_gui_finish SP wayland no default unfiltered no "openat" 2>/dev/null
+SP_RC=$?
+[[ $SP_RC -eq 1 ]] && ok "allowlist via gui_finish is rejected" || fail "allowlist via gui_finish returned $SP_RC"
+has_arg SP "--seccomp" && fail "rejected allowlist appended --seccomp" || ok "rejected allowlist appends nothing"
+
+SNM=()
+BWRAP_SECCOMP_DIR="${TMPDIR_TEST}/missing" bwrap_gui_finish SNM wayland no default unfiltered no default 2>/dev/null
+SNM_RC=$?
+[[ $SNM_RC -eq 1 ]] && ok "seccomp=default fails when the blob is missing" || fail "missing seccomp blob returned $SNM_RC"
+has_arg SNM "--seccomp" && fail "failed seccomp setup appended --seccomp" || ok "failed seccomp setup appends nothing"
+
+SOM=()
+BWRAP_SECCOMP_DIR="${TMPDIR_TEST}/missing" bwrap_gui_finish SOM wayland no default unfiltered no none 2>/dev/null
+SOM_RC=$?
+[[ $SOM_RC -eq 0 ]] && ok "seccomp=none ignores a missing blob" || fail "seccomp=none returned $SOM_RC"
+has_arg SOM "--seccomp" && fail "seccomp=none appended --seccomp" || ok "seccomp=none appends nothing when the blob is missing"
+
+# ── bwrap_seccomp ───────────────────────────────────────────
+
+section "bwrap_seccomp"
+
+SA=()
+bwrap_seccomp SA none
+SA_RC=$?
+[[ $SA_RC -eq 0 ]] && ok "none returns 0" || fail "none returned $SA_RC"
+[[ ${#SA[@]} -eq 0 ]] && ok "none appends nothing" || fail "none appended ${SA[*]}"
+
+SB=()
+bwrap_seccomp SB default
+SB_RC=$?
+[[ $SB_RC -eq 0 ]] && ok "default returns 0 with a valid fixture" || fail "default returned $SB_RC"
+if [[ ${#SB[@]} -eq 2 && "${SB[0]}" == "--seccomp" && "${SB[1]}" =~ ^[0-9]+$ ]]; then
+    ok "default appends --seccomp <fd>"
+else
+    fail "default output was: ${SB[*]}"
+fi
+
+SC=()
+BWRAP_SECCOMP_DIR="${TMPDIR_TEST}/missing" bwrap_seccomp SC default 2>/dev/null
+SC_RC=$?
+[[ $SC_RC -eq 1 ]] && ok "missing default fails closed" || fail "missing default returned $SC_RC"
+[[ ${#SC[@]} -eq 0 ]] && ok "missing default appends nothing" || fail "missing default appended ${SC[*]}"
+
+BAD_SIZE_DIR="${TMPDIR_TEST}/bad-size"
+mkdir -p "$BAD_SIZE_DIR"
+head -c 12 /dev/zero > "${BAD_SIZE_DIR}/default.${SECCOMP_ARCH}.bpf"
+SE=()
+BWRAP_SECCOMP_DIR="$BAD_SIZE_DIR" bwrap_seccomp SE default 2>/dev/null
+SE_RC=$?
+[[ $SE_RC -eq 1 && ${#SE[@]} -eq 0 ]] && ok "invalid size fails closed" || fail "invalid size returned $SE_RC"
+
+if [[ "$SECCOMP_MAGIC" != "00000000" ]]; then
+    BAD_ARCH_DIR="${TMPDIR_TEST}/bad-arch"
+    mkdir -p "$BAD_ARCH_DIR"
+    write_fake_blob "${BAD_ARCH_DIR}/default.${SECCOMP_ARCH}.bpf" "deadbeef"
+    SG=()
+    BWRAP_SECCOMP_DIR="$BAD_ARCH_DIR" bwrap_seccomp SG default 2>/dev/null
+    SG_RC=$?
+    [[ $SG_RC -eq 1 && ${#SG[@]} -eq 0 ]] && ok "arch mismatch fails closed" || fail "arch mismatch returned $SG_RC"
+else
+    ok "arch mismatch test skipped (unknown host arch)"
+fi
+
+FAKE_GEN="${TMPDIR_TEST}/fake-seccomp-gen"
+GEN_COUNTER="${TMPDIR_TEST}/gen-count"
+cat > "$FAKE_GEN" <<'GEN'
+#!/usr/bin/env bash
+printf 'x' >> "${FAKE_GEN_COUNTER:?}"
+_out=""
+while (($#)); do
+    case "$1" in
+        -o) _out=$2; shift 2 ;;
+        --allowlist) shift 2 ;;
+        *) shift ;;
+    esac
+done
+cp "${FAKE_GEN_BLOB:?}" "$_out"
+GEN
+chmod +x "$FAKE_GEN"
+
+export FAKE_GEN_COUNTER="$GEN_COUNTER"
+export FAKE_GEN_BLOB="$SECCOMP_FIXTURE_BLOB"
+export BWRAP_SECCOMP_GEN="$FAKE_GEN"
+rm -rf "$BWRAP_SECCOMP_CACHE_DIR" "$GEN_COUNTER"
+
+SI=()
+bwrap_seccomp SI "openat read"
+SI_RC=$?
+SJ=()
+bwrap_seccomp SJ "openat read"
+SJ_RC=$?
+GEN_CALLS=$(wc -c < "$GEN_COUNTER" 2>/dev/null || echo 0)
+if [[ $SI_RC -eq 0 && $SJ_RC -eq 0 && "$GEN_CALLS" -eq 1 ]]; then
+    ok "allowlist compiles once and reuses the cache"
+else
+    fail "allowlist rc=$SI_RC/$SJ_RC generator_calls=$GEN_CALLS"
+fi
+if [[ ${#SI[@]} -eq 2 && "${SI[0]}" == "--seccomp" && "${SI[1]}" =~ ^[0-9]+$ ]]; then
+    ok "allowlist appends --seccomp <fd>"
+else
+    fail "allowlist output was: ${SI[*]}"
+fi
+CACHE_BLOB=$(find "$BWRAP_SECCOMP_CACHE_DIR" -name '*.bpf' -type f | head -n1)
+if [[ -n "$CACHE_BLOB" && "$(stat -c %a "$CACHE_BLOB")" == "600" ]]; then
+    ok "cached allowlist filter is mode 600"
+else
+    fail "cached allowlist filter mode: $(stat -c %a "${CACHE_BLOB:-/nonexistent}" 2>/dev/null)"
+fi
+
+SK=()
+bwrap_seccomp SK "" 2>/dev/null
+SK_RC=$?
+[[ $SK_RC -eq 1 && ${#SK[@]} -eq 0 ]] && ok "empty allowlist fails closed" || fail "empty allowlist returned $SK_RC"
+
+FAIL_GEN="${TMPDIR_TEST}/fail-seccomp-gen"
+printf '#!/usr/bin/env bash\nexit 2\n' > "$FAIL_GEN"
+chmod +x "$FAIL_GEN"
+SL=()
+BWRAP_SECCOMP_GEN="$FAIL_GEN" bwrap_seccomp SL "openat" 2>/dev/null
+SL_RC=$?
+[[ $SL_RC -eq 1 && ${#SL[@]} -eq 0 ]] && ok "generator failure fails closed" || fail "generator failure returned $SL_RC"
+LEFT=$(find "$BWRAP_SECCOMP_CACHE_DIR" -name '*.tmp.*' -type f | wc -l)
+[[ "$LEFT" -eq 0 ]] && ok "generator failure leaves no temp files" || fail "temp files left: $LEFT"
+
+SM=(--seccomp 3)
+bwrap_seccomp SM default 2>/dev/null
+SM_RC=$?
+[[ $SM_RC -eq 1 && ${#SM[@]} -eq 2 ]] && ok "existing --seccomp is rejected" || fail "duplicate --seccomp returned $SM_RC"
+
+unset BWRAP_SECCOMP_GEN FAKE_GEN_COUNTER FAKE_GEN_BLOB
+
 # ── bwrap_ssh_agent ─────────────────────────────────────────
 
 section "bwrap_ssh_agent"
@@ -411,6 +588,43 @@ section "bwrap_dbus_system"
 U=()
 bwrap_dbus_system U
 ok "bwrap_dbus_system runs without error"
+
+# ── bwrap_dbus_filtered ─────────────────────────────────────
+
+section "bwrap_dbus_filtered"
+
+EMPTY_PATH="${TMPDIR_TEST}/empty-path"
+mkdir -p "$EMPTY_PATH"
+NO_PROXY_ADDR="unix:path=/nonexistent"
+
+DF=()
+PATH="$EMPTY_PATH" DBUS_SESSION_BUS_ADDRESS="$NO_PROXY_ADDR" bwrap_dbus_filtered DF 2>/dev/null
+DF_RC=$?
+[[ $DF_RC -eq 1 ]] && ok "missing xdg-dbus-proxy fails closed" || fail "missing proxy returned $DF_RC"
+[[ ${#DF[@]} -eq 0 ]] && ok "missing proxy appends nothing" || fail "missing proxy appended ${DF[*]}"
+
+DC=()
+PATH="$EMPTY_PATH" DBUS_SESSION_BUS_ADDRESS="$NO_PROXY_ADDR" bwrap_dbus_common DC 2>/dev/null
+DC_RC=$?
+[[ $DC_RC -eq 1 && ${#DC[@]} -eq 0 ]] && ok "bwrap_dbus_common propagates the missing proxy error" || fail "bwrap_dbus_common returned $DC_RC"
+
+DGF=()
+PATH="$EMPTY_PATH" DBUS_SESSION_BUS_ADDRESS="$NO_PROXY_ADDR" bwrap_gui_finish DGF wayland no default filtered no none 2>/dev/null
+DGF_RC=$?
+[[ $DGF_RC -eq 1 ]] && ok "dbus=filtered fails when the proxy is missing" || fail "dbus=filtered returned $DGF_RC"
+has_arg DGF "${XDG_RUNTIME_DIR}/bus" && fail "failed dbus=filtered bound the bus socket" || ok "failed dbus=filtered appends no bus bind"
+has_arg DGF "DBUS_SESSION_BUS_ADDRESS" && fail "failed dbus=filtered set the bus address" || ok "failed dbus=filtered appends no bus env"
+
+DGN=()
+PATH="$EMPTY_PATH" DBUS_SESSION_BUS_ADDRESS="$NO_PROXY_ADDR" bwrap_gui_finish DGN wayland no default none no none 2>/dev/null
+DGN_RC=$?
+[[ $DGN_RC -eq 0 ]] && ok "dbus=none ignores a missing proxy" || fail "dbus=none returned $DGN_RC"
+has_arg DGN "${XDG_RUNTIME_DIR}/bus" && fail "dbus=none bound the bus socket" || ok "dbus=none appends no bus bind"
+
+DGU=()
+PATH="$EMPTY_PATH" DBUS_SESSION_BUS_ADDRESS="$NO_PROXY_ADDR" bwrap_gui_finish DGU wayland no default unfiltered no none 2>/dev/null
+DGU_RC=$?
+[[ $DGU_RC -eq 0 ]] && ok "dbus=unfiltered does not require the proxy" || fail "dbus=unfiltered returned $DGU_RC"
 
 # ── bwrap_exec ──────────────────────────────────────────────
 

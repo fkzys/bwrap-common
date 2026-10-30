@@ -27,6 +27,9 @@ yay -S bwrap-common
 sudo make install
 ```
 
+`make install` also compiles the seccomp helper and the architecture-specific
+default filter, so `gcc` and the `libseccomp` headers are required.
+
 ### Uninstall
 
 ```sh
@@ -60,7 +63,7 @@ bwrap_gui_setup A yes yes                # yes = network (adds resolv), yes = gp
 bwrap_bind_dir A "${HOME}/.config/app" "${HOME}/Data"
 bwrap_ro_bind_dir A "${MEDIA_DIR}"
 bwrap_audio A
-bwrap_gui_finish A wayland yes default filtered  # display, network, malloc, dbus
+bwrap_gui_finish A wayland yes default filtered yes default  # display, network, malloc, dbus, themes, seccomp
 bwrap_exec "${A[@]}" -- /usr/bin/app "$@"
 ```
 
@@ -82,6 +85,7 @@ bwrap_audio A
 bwrap_dbus_common A
 bwrap_env_base A
 bwrap_hardened_malloc A default
+bwrap_seccomp A default
 bwrap_sandbox A yes
 bwrap_exec "${A[@]}" -- /usr/bin/app "$@"
 ```
@@ -101,7 +105,7 @@ bwrap_exec "${A[@]}" -- /usr/bin/app "$@"
 | `bwrap_audio` | PipeWire + PulseAudio sockets |
 | `bwrap_dbus_session` | Session D-Bus socket (unfiltered) |
 | `bwrap_dbus_system` | System D-Bus socket |
-| `bwrap_dbus_filtered` | Filtered D-Bus via `xdg-dbus-proxy` with custom rules; falls back to unfiltered if proxy is unavailable |
+| `bwrap_dbus_filtered` | Filtered D-Bus via `xdg-dbus-proxy` with custom rules; fails if the proxy is unavailable |
 | `bwrap_dbus_common` | Pre-configured filtered D-Bus for typical GUI apps (XDG portals, notifications, status notifier, screen saver, login1, a11y); accepts extra rules |
 | `bwrap_themes` | GTK2/3, dconf, fontconfig, Qt, Kvantum, fonts, icons |
 | `bwrap_fcitx` | fcitx5 input method sockets + env |
@@ -109,6 +113,7 @@ bwrap_exec "${A[@]}" -- /usr/bin/app "$@"
 | `bwrap_runtime_dir` | XDG_RUNTIME_DIR with correct permissions |
 | `bwrap_env_base` | `HOME`, `LANG`, `PATH`, `XDG_RUNTIME_DIR` |
 | `bwrap_sandbox` | `--unshare-all`, optional `--share-net` / `--new-session` |
+| `bwrap_seccomp` | Add `--seccomp` from the precompiled default blocklist or a compiled syscall allowlist |
 | `bwrap_resolve_files` | Resolve file arguments to bind mounts |
 | `bwrap_bind_dir` | Create state dirs on host + add `--bind` |
 | `bwrap_ro_bind_dir` | Bind pre-existing dirs read-only, skip missing |
@@ -123,13 +128,13 @@ bwrap_exec "${A[@]}" -- /usr/bin/app "$@"
 | Function | Purpose |
 |---|---|
 | `bwrap_gui_setup` | `bwrap_base` + `lib64` + optional `gpu` + optional `resolv` + `runtime_dir` + `home_tmpfs` |
-| `bwrap_gui_finish` | `themes` + `wayland`/`x11` + D-Bus (`unfiltered`/`filtered`/`none`) + `env_base` + malloc + `sandbox` |
+| `bwrap_gui_finish` | `themes` + `wayland`/`x11` + D-Bus (`unfiltered`/`filtered`/`none`) + `env_base` + malloc + seccomp + `sandbox` |
 
 `bwrap_gui_setup` parameters:
 
 - `$1` — array name to append bwrap arguments to (required)
 - `$2` — network: `yes`/`no` (default `no`); `yes` adds the resolv.conf bind
-- `$3` — GPU: `yes`/`no` (default `yes`); `yes` exposes the DRI/NVIDIA device nodes, `no` omits them. GPU exposure expands the attack surface so it must be omitted when possible.
+- `$3` — GPU: `yes`/`no` (default `no`); `yes` exposes the DRI/NVIDIA device nodes, `no` omits them. GPU exposure expands the attack surface, so it is opt-in.
 
 ### D-Bus filtering
 
@@ -137,6 +142,13 @@ bwrap_exec "${A[@]}" -- /usr/bin/app "$@"
 and the provided rules, waits for the proxy socket, and binds it into the
 sandbox as `$XDG_RUNTIME_DIR/bus`. Proxy processes are tracked and cleaned
 up automatically by `bwrap_exec`.
+
+If `xdg-dbus-proxy` is not installed, `bwrap_dbus_filtered` and
+`bwrap_dbus_common` return non-zero and do not fall back to an unfiltered
+bus; `bwrap_gui_finish` propagates that failure. Use `dbus=none` to run
+without D-Bus, or `unfiltered` to opt into the unfiltered bus explicitly.
+If no session bus is available, filtered mode is skipped because there is
+nothing to proxy.
 
 `bwrap_dbus_common` wraps `bwrap_dbus_filtered` with a default rule set:
 
@@ -147,20 +159,74 @@ up automatically by `bwrap_exec`.
 
 Extra `--talk`/`--own` rules can be appended per-app.
 
-`bwrap_gui_finish` 5th parameter (`dbus` mode):
-- `unfiltered` (default) — full session bus access
-- `filtered` — `bwrap_dbus_common`
-- `none` — no D-Bus access
+`bwrap_gui_finish` parameters:
+- `$1` — array name to append bwrap arguments to
+- `$2` — display: `wayland`/`x11` (default `wayland`)
+- `$3` — network: `yes`/`no` (default `no`); `yes` adds `--share-net`
+- `$4` — malloc variant: `default`/`light`/`no`
+- `$5` — D-Bus mode: `unfiltered` (default), `filtered`, `none`; `filtered` returns non-zero if `xdg-dbus-proxy` is unavailable
+- `$6` — themes: `yes`/`no` (default `yes`)
+- `$7` — seccomp: `default`/`none` (default `default`); `default` returns non-zero if the filter blob is unavailable; use `bwrap_seccomp` directly for an allowlist
 
 When using filtered D-Bus, wrappers must call `bwrap_exec` instead of
 `exec bwrap` to ensure proxy cleanup.
+
+## Seccomp
+
+`bwrap_gui_finish` applies the precompiled default blocklist unless the 7th
+parameter is `none`. The blocklist is default-allow: it denies syscalls that
+are dangerous inside a sandbox (`mount`, `pivot_root`, `chroot`, `unshare`,
+`setns`, `ptrace`, `bpf`, `io_uring_*`, `userfaultfd`, `process_vm_*`,
+keyring operations, `clone` with `CLONE_NEWUSER`, and a few more). See
+`seccomp/default.conf` for the exact list.
+
+`bwrap_seccomp A default` applies
+`<BWRAP_SECCOMP_DIR>/default.$(uname -m).bpf`. A missing, malformed, or
+wrong-architecture blob fails closed: the function returns non-zero and adds
+no filter. Use `none` to disable seccomp explicitly.
+
+`bwrap_seccomp A "openat read write"` compiles a syscall **allowlist** and
+caches the result. Allowlist mode is fail-closed: an unknown syscall name, a
+missing generator, or a compile failure returns non-zero. It is a power-user
+API and is not accepted through `bwrap_gui_finish`, which only accepts
+`default`/`none`.
+
+The allowlist always permits the syscalls needed by the new process
+(`execve`, `execveat`, `exit`, `exit_group`, `write`, `rt_sigreturn`,
+`sigreturn`) and by bubblewrap's pid 1, which receives the same filter
+(`wait4`, `waitid`, `close`). Everything else must be listed explicitly.
+
+Build/install:
+
+- `make build` compiles `build/bwrap-seccomp-gen` and generates
+  `build/seccomp/default.$(uname -m).bpf`.
+- `make install` installs the helper to
+  `/usr/lib/bwrap-common/bwrap-seccomp-gen` and the blob to
+  `/usr/lib/bwrap-common/seccomp/`.
+- `gcc` and the `libseccomp` headers are build-time dependencies;
+  `libseccomp` is a runtime dependency.
+
+`./tests/seccomp-check.sh` invokes every rule in `seccomp/default.conf` inside
+a sandbox with the default filter and verifies the expected `EPERM`/`ENOSYS`.
+
+| Variable | Default |
+|---|---|
+| `BWRAP_SECCOMP_DIR` | `/usr/lib/bwrap-common/seccomp` |
+| `BWRAP_SECCOMP_GEN` | `/usr/lib/bwrap-common/bwrap-seccomp-gen` |
+| `BWRAP_SECCOMP_CACHE_DIR` | `${XDG_CACHE_HOME:-$HOME/.cache}/bwrap-common/seccomp` |
+
+The allowlist cache key is
+`sha256("bwrap-common-seccomp-v2\n<arch>\n<spec>\n")`; cached files are mode
+`0600`.
 
 ## Dependencies
 
 - `bubblewrap` (`bwrap`)
 - `bash`
+- `libseccomp` (runtime, for the seccomp helper)
+- `gcc` + `libseccomp` headers (build-time, for `make build`/`make install`)
 - [verify-lib](https://github.com/fkzys/verify-lib) (recommended, for integrity verification before sourcing)
-- `xdg-dbus-proxy` (optional, for filtered D-Bus)
+- `xdg-dbus-proxy` (required for `filtered` D-Bus; optional otherwise)
 
 - [hardened_malloc](https://github.com/fkzys/hardened_malloc) (optional)
 ## Files
@@ -168,6 +234,9 @@ When using filtered D-Bus, wrappers must call `bwrap_exec` instead of
 | Path | Purpose |
 |---|---|
 | `/usr/lib/bwrap-common/bwrap-common.sh` | Library |
+| `/usr/lib/bwrap-common/bwrap-seccomp-gen` | Allowlist compiler |
+| `/usr/lib/bwrap-common/seccomp/default.<arch>.bpf` | Precompiled default blocklist |
+| `seccomp/default.conf` | Default blocklist source |
 
 ## License
 

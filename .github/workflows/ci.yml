@@ -5,11 +5,17 @@ on:
     paths:
       - 'bwrap-common.sh'
       - 'tests/**'
+      - 'seccomp/**'
+      - 'tools/**'
+      - 'Makefile'
       - '.github/workflows/ci.yml'
   pull_request:
     paths:
       - 'bwrap-common.sh'
       - 'tests/**'
+      - 'seccomp/**'
+      - 'tools/**'
+      - 'Makefile'
       - '.github/workflows/ci.yml'
 
 jobs:
@@ -17,10 +23,29 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - run: shellcheck -s bash -e SC2034,SC2178,SC2317 bwrap-common.sh
+      - run: shellcheck -s bash -e SC2034,SC2178,SC2317 bwrap-common.sh tests/seccomp-check.sh
 
   test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - run: bash tests/test.sh
+
+  seccomp:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap libseccomp-dev build-essential
+      - name: Enable unprivileged user namespaces
+        run: |
+          sudo sysctl -w kernel.unprivileged_userns_clone=1 || true
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+      - name: Verify default seccomp filter
+        run: |
+          if ! ./tests/seccomp-check.sh; then
+            echo "unprivileged sandbox failed, retrying as root"
+            sudo --preserve-env=PATH ./tests/seccomp-check.sh
+          fi

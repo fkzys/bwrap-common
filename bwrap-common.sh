@@ -278,6 +278,152 @@ bwrap_sandbox() {
     _arr+=(--die-with-parent)
 }
 
+# ── seccomp filters ─────────────────────────────────────────
+# bwrap_seccomp ARRAYNAME MODE
+#   none     no seccomp filter
+#   default  precompiled default.<arch>.bpf from BWRAP_SECCOMP_DIR
+#   <spec>   syscall allowlist (space/comma separated), compiled on first
+#            use and cached under BWRAP_SECCOMP_CACHE_DIR
+# Env vars:
+#   BWRAP_SECCOMP_DIR        precompiled filter dir (/usr/lib/bwrap-common/seccomp)
+#   BWRAP_SECCOMP_GEN        allowlist compiler (/usr/lib/bwrap-common/bwrap-seccomp-gen)
+#   BWRAP_SECCOMP_CACHE_DIR  compiled filter cache (~/.cache/bwrap-common/seccomp)
+bwrap_seccomp() {
+    local _arrname="$1" _mode="$2"
+    case "$_mode" in
+        none)
+            return 0
+            ;;
+        default)
+            local _dir="${BWRAP_SECCOMP_DIR:-/usr/lib/bwrap-common/seccomp}"
+            local _file
+            _file="${_dir}/default.$(uname -m).bpf"
+            _bwrap_seccomp_use "$_arrname" "$_file"
+            return $?
+            ;;
+        *)
+            _bwrap_seccomp_allowlist "$_arrname" "$_mode"
+            return $?
+            ;;
+    esac
+}
+
+# Internal: report a seccomp setup problem.
+_bwrap_seccomp_fail() {
+    echo "bwrap_seccomp: $1" >&2
+    return 1
+}
+
+# Internal: validate FILE, open it and append --seccomp FD to ARRAYNAME.
+_bwrap_seccomp_use() {
+    local _arrname="$1" _file="$2"
+    local -n _arr="$_arrname"
+
+    local _arg
+    for _arg in "${_arr[@]}"; do
+        if [[ "$_arg" == "--seccomp" ]]; then
+            echo "bwrap_seccomp: array already contains --seccomp" >&2
+            return 1
+        fi
+    done
+
+    [[ -f "$_file" && -r "$_file" ]] || {
+        _bwrap_seccomp_fail "filter not found or unreadable: $_file"
+        return 1
+    }
+
+    local _size
+    _size=$(stat -c %s "$_file" 2>/dev/null)
+    [[ -n "$_size" ]] || {
+        _bwrap_seccomp_fail "cannot stat filter: $_file"
+        return 1
+    }
+    if (( _size <= 0 || _size % 8 != 0 )); then
+        _bwrap_seccomp_fail "invalid filter size ($_size): $_file"
+        return 1
+    fi
+
+    local _arch _want _got
+    _arch=$(uname -m)
+    case "$_arch" in
+        x86_64)               _want="3e0000c0" ;;
+        aarch64)              _want="b70000c0" ;;
+        i386|i486|i586|i686)  _want="03000040" ;;
+        armv6l|armv7l|armv8l) _want="28000040" ;;
+        riscv64)              _want="f30000c0" ;;
+        ppc64le)              _want="150000c0" ;;
+        s390x)                _want="16000080" ;;
+        loongarch64)          _want="020100c0" ;;
+        *)                    _want="" ;;
+    esac
+    if [[ -n "$_want" ]]; then
+        _got=$(od -An -tx1 -j12 -N4 "$_file" 2>/dev/null | tr -d ' \n')
+        if [[ "$_got" != "$_want" ]]; then
+            _bwrap_seccomp_fail "filter arch mismatch (want $_want, got ${_got:-none}): $_file"
+            return 1
+        fi
+    fi
+
+    local _fd
+    if ! exec {_fd}< "$_file"; then
+        _bwrap_seccomp_fail "cannot open filter: $_file"
+        return 1
+    fi
+    _arr+=(--seccomp "$_fd")
+    return 0
+}
+
+# Internal: compile SPEC to a cached cBPF file, then apply it.
+_bwrap_seccomp_allowlist() {
+    local _arrname="$1" _spec="$2"
+
+    if ! command -v sha256sum >/dev/null 2>&1; then
+        echo "bwrap_seccomp: sha256sum not found" >&2
+        return 1
+    fi
+    local _gen="${BWRAP_SECCOMP_GEN:-/usr/lib/bwrap-common/bwrap-seccomp-gen}"
+    if [[ ! -x "$_gen" ]]; then
+        echo "bwrap_seccomp: seccomp generator not found: $_gen" >&2
+        return 1
+    fi
+    if [[ -z "$_spec" ]]; then
+        echo "bwrap_seccomp: empty allowlist spec" >&2
+        return 1
+    fi
+
+    local _cache="${BWRAP_SECCOMP_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/bwrap-common/seccomp}"
+    local _hash
+    _hash=$(printf 'bwrap-common-seccomp-v2\n%s\n%s\n' "$(uname -m)" "$_spec" | sha256sum | cut -d' ' -f1)
+    if [[ -z "$_hash" ]]; then
+        echo "bwrap_seccomp: failed to compute cache key" >&2
+        return 1
+    fi
+
+    local _cache_file="${_cache}/${_hash}.bpf"
+    if [[ ! -f "$_cache_file" ]]; then
+        mkdir -p "$_cache" 2>/dev/null || {
+            echo "bwrap_seccomp: cannot create cache dir: $_cache" >&2
+            return 1
+        }
+        chmod 700 "$_cache" 2>/dev/null || true
+        local _tmp="${_cache_file}.tmp.$$"
+        if ! "$_gen" --allowlist "$_spec" -o "$_tmp"; then
+            rm -f "$_tmp"
+            echo "bwrap_seccomp: failed to compile allowlist filter" >&2
+            return 1
+        fi
+        if ! mv -f "$_tmp" "$_cache_file"; then
+            rm -f "$_tmp"
+            echo "bwrap_seccomp: cannot store cached filter: $_cache_file" >&2
+            return 1
+        fi
+        chmod 600 "$_cache_file" 2>/dev/null || true
+    fi
+
+    _bwrap_seccomp_use "$_arrname" "$_cache_file"
+    return $?
+}
+
 # ── fcitx5 input method ──────────────────────────────────────
 bwrap_fcitx() {
     local -n _arr=$1
@@ -304,10 +450,10 @@ bwrap_ssh_agent() {
 }
 
 # ── Standard GUI sandbox: setup phase ─────────────────────────
-# $2 = network: "yes" or "no" (default "no")
-# $3 = GPU: "yes" or "no" (default "yes")
+# $2 = network: "yes" or "no"
+# $3 = GPU: "yes" or "no"
 bwrap_gui_setup() {
-    local _v=$1 _net="${2:-no}" _gpu="${3:-yes}"
+    local _v=$1 _net="${2:-no}" _gpu="${3:-no}"
     bwrap_base "$_v"
     bwrap_lib64 "$_v"
     [[ "$_gpu" == "yes" ]] && bwrap_gpu "$_v"
@@ -319,17 +465,19 @@ bwrap_gui_setup() {
 
 # ── Standard GUI sandbox: finish phase ────────────────────────
 # $4 = malloc variant (default/light/no)
-# $5 = dbus mode: "unfiltered" (default), "filtered", or "none"
+# $5 = dbus mode: "unfiltered", "filtered", or "none"
+# $6 = themes: "yes" or "no"
+# $7 = seccomp: "default" or "none" (allowlists go through bwrap_seccomp)
 bwrap_gui_finish() {
-    local _v=$1 _display="${2:-wayland}" _net="${3:-no}" _malloc="${4:-default}" _dbus="${5:-unfiltered}"
-    bwrap_themes "$_v"
+    local _v=$1 _display="${2:-wayland}" _net="${3:-no}" _malloc="${4:-default}" _dbus="${5:-unfiltered}" _themes="${6:-yes}" _seccomp="${7:-default}"
+    [[ "$_themes" == "yes" ]] && bwrap_themes "$_v"
     if [[ "$_display" == "x11" ]]; then
         bwrap_x11 "$_v"
     else
         bwrap_wayland "$_v"
     fi
     case "$_dbus" in
-        filtered)   bwrap_dbus_common "$_v" ;;
+        filtered)   bwrap_dbus_common "$_v" || return 1 ;;
         unfiltered) bwrap_dbus_session "$_v" ;;
         none)       ;;
     esac
@@ -339,6 +487,10 @@ bwrap_gui_finish() {
     else
         bwrap_hardened_malloc "$_v" "$_malloc"
     fi
+    case "$_seccomp" in
+        default|none) bwrap_seccomp "$_v" "$_seccomp" || return 1 ;;
+        *) echo "bwrap_gui_finish: seccomp must be 'default' or 'none' (call bwrap_seccomp directly for an allowlist)" >&2; return 1 ;;
+    esac
     bwrap_sandbox "$_v" "$_net"
 }
 
@@ -394,6 +546,11 @@ bwrap_dbus_filtered() {
     local _arrname="$1"; shift
     local -n _df="$_arrname"
 
+    if ! command -v xdg-dbus-proxy >/dev/null 2>&1; then
+        echo "bwrap_dbus_filtered: xdg-dbus-proxy not found (required for filtered D-Bus)" >&2
+        return 1
+    fi
+
     local bus_addr="${DBUS_SESSION_BUS_ADDRESS:-}"
     if [[ -z "$bus_addr" ]]; then
         if [[ -S "${XDG_RUNTIME_DIR}/bus" ]]; then
@@ -402,12 +559,6 @@ bwrap_dbus_filtered() {
             echo "bwrap_dbus_filtered: no session bus found, skipping" >&2
             return 0
         fi
-    fi
-
-    if ! command -v xdg-dbus-proxy >/dev/null 2>&1; then
-        echo "bwrap_dbus_filtered: xdg-dbus-proxy not found, falling back to unfiltered" >&2
-        bwrap_dbus_session "$_arrname"
-        return 0
     fi
 
     local proxy_sock="${XDG_RUNTIME_DIR}/bwrap-dbus-proxy-$$-${RANDOM}.sock"
@@ -462,6 +613,7 @@ bwrap_exec() {
     bwrap "$@" <&0 &
     _bwrap_pid=$!
 
+    # shellcheck disable=SC2329
     _bwrap_on_signal() {
         kill "$_bwrap_pid" 2>/dev/null || true
         wait "$_bwrap_pid" 2>/dev/null || true
