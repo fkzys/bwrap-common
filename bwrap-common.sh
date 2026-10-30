@@ -279,6 +279,8 @@ bwrap_sandbox() {
 }
 
 # ── seccomp filters ─────────────────────────────────────────
+_BWRAP_SECCOMP_FDS=()
+
 # bwrap_seccomp ARRAYNAME MODE
 #   none     no seccomp filter
 #   default  precompiled default.<arch>.bpf from BWRAP_SECCOMP_DIR
@@ -312,6 +314,25 @@ bwrap_seccomp() {
 _bwrap_seccomp_fail() {
     echo "bwrap_seccomp: $1" >&2
     return 1
+}
+
+# Internal: close filter descriptors inherited by bwrap.
+_bwrap_seccomp_close_fds() {
+    local _fd
+    if (( ${#_BWRAP_SECCOMP_FDS[@]} == 0 )); then
+        return 0
+    fi
+    for _fd in "${_BWRAP_SECCOMP_FDS[@]}"; do
+        exec {_fd}<&- 2>/dev/null || true
+    done
+    _BWRAP_SECCOMP_FDS=()
+}
+
+# Internal: install cleanup only when the caller has no EXIT trap.
+_bwrap_seccomp_install_cleanup() {
+    if [[ -z "$(trap -p EXIT)" ]]; then
+        trap '_bwrap_cleanup' EXIT
+    fi
 }
 
 # Internal: validate FILE, open it and append --seccomp FD to ARRAYNAME.
@@ -369,6 +390,8 @@ _bwrap_seccomp_use() {
         _bwrap_seccomp_fail "cannot open filter: $_file"
         return 1
     fi
+    _BWRAP_SECCOMP_FDS+=("$_fd")
+    _bwrap_seccomp_install_cleanup
     _arr+=(--seccomp "$_fd")
     return 0
 }
@@ -514,6 +537,11 @@ _bwrap_dbus_cleanup() {
     _BWRAP_DBUS_PROXY_SOCKETS=()
 }
 
+_bwrap_cleanup() {
+    _bwrap_dbus_cleanup
+    _bwrap_seccomp_close_fds
+}
+
 # xdg-dbus-proxy rules: XDG portals
 _dbus_portal_rules() {
     local -n _pr=$1
@@ -568,7 +596,7 @@ bwrap_dbus_filtered() {
     _BWRAP_DBUS_PROXY_PIDS+=("$proxy_pid")
     _BWRAP_DBUS_PROXY_SOCKETS+=("$proxy_sock")
 
-    trap '_bwrap_dbus_cleanup' EXIT
+    trap '_bwrap_cleanup' EXIT
 
     local _attempts=0
     while [[ ! -S "$proxy_sock" ]]; do
@@ -612,12 +640,13 @@ bwrap_exec() {
 
     bwrap "$@" <&0 &
     _bwrap_pid=$!
+    _bwrap_seccomp_close_fds
 
     # shellcheck disable=SC2329
     _bwrap_on_signal() {
         kill "$_bwrap_pid" 2>/dev/null || true
         wait "$_bwrap_pid" 2>/dev/null || true
-        _bwrap_dbus_cleanup
+        _bwrap_cleanup
     }
     trap '_bwrap_on_signal; exit 143' TERM
     trap '_bwrap_on_signal; exit 130' INT
@@ -626,7 +655,7 @@ bwrap_exec() {
 
     wait "$_bwrap_pid" || _rc=$?
 
-    _bwrap_dbus_cleanup
+    _bwrap_cleanup
 
     exit "$_rc"
 }

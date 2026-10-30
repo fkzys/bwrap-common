@@ -45,7 +45,11 @@ jobs:
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
       - name: Verify default seccomp filter
         run: |
-          if ! ./tests/seccomp-check.sh; then
-            echo "unprivileged sandbox failed, retrying as root"
+          status=0
+          ./tests/seccomp-check.sh || status=$?
+          if (( status == 77 )) && (( EUID != 0 )); then
+            echo "unprivileged sandbox unavailable, retrying as root"
             sudo --preserve-env=PATH ./tests/seccomp-check.sh
+            exit $?
           fi
+          exit "$status"

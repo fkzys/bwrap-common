@@ -477,6 +477,13 @@ if [[ ${#SB[@]} -eq 2 && "${SB[0]}" == "--seccomp" && "${SB[1]}" =~ ^[0-9]+$ ]];
 else
     fail "default output was: ${SB[*]}"
 fi
+SECCOMP_FD="${SB[1]:-}"
+_bwrap_seccomp_close_fds
+if [[ -n "$SECCOMP_FD" ]] && { : <&"$SECCOMP_FD"; } 2>/dev/null; then
+    fail "seccomp filter fd was left open"
+else
+    ok "seccomp filter fd is closed by cleanup"
+fi
 
 SC=()
 BWRAP_SECCOMP_DIR="${TMPDIR_TEST}/missing" bwrap_seccomp SC default 2>/dev/null

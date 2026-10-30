@@ -19,7 +19,7 @@ $(SECCOMP_GEN): tools/seccomp-gen.c
 
 $(SECCOMP_BPF): $(SECCOMP_GEN) seccomp/default.conf
 	@mkdir -p $(dir $@)
-	$(SECCOMP_GEN) --blocklist seccomp/default.conf -o $@
+	$(SECCOMP_GEN) --blocklist seccomp/default.conf --arch "$(ARCH)" -o $@
 
 test:
 	bash tests/test.sh

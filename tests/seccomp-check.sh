@@ -8,7 +8,8 @@
 # The probe is compiled from the embedded C source below and runs as a child
 # of bwrap, so the filter is installed by bubblewrap exactly as for real apps.
 # Exit status: 0 = all rules verified, 1 = a rule failed or was not exercised,
-# 2 = the default filter was not active (probe refused to continue).
+# 2 = the default filter was not active, 77 = the sandbox environment is
+# unavailable (e.g. unprivileged user namespaces are disabled).
 
 set -euo pipefail
 
@@ -21,7 +22,7 @@ if [[ ! -f "$_conf" ]]; then
 fi
 
 if [[ -z "${BWRAP_SECCOMP_DIR:-}" ]]; then
-    make -C "$_root" build
+    make -C "$_root" ARCH="$(uname -m)" build
     BWRAP_SECCOMP_DIR="$_root/build/seccomp"
 fi
 export BWRAP_SECCOMP_DIR
@@ -59,6 +60,9 @@ cat >"$_tmp/probe.c" <<'PROBE'
 #endif
 #ifndef PER_LINUX
 #define PER_LINUX 0UL
+#endif
+#ifndef PER_LINUX32
+#define PER_LINUX32 0x0008UL
 #endif
 #ifndef SYS_umount
 #if defined(__x86_64__) && !defined(__ILP32__)
@@ -454,6 +458,52 @@ static void t_ioctl_allowed(void)
 #endif
 }
 
+static void t_ioctl_tiocsti_high(void)
+{
+#if defined(SYS_ioctl) && (defined(__LP64__) || defined(_LP64))
+	char c = 0;
+	int fd, err;
+	long rc;
+
+	fd = open_devnull();
+	if (fd < 0) {
+		printf("SKIP ioctl:TIOCSTI-high no-devnull\n");
+		return;
+	}
+	errno = 0;
+	rc = syscall(SYS_ioctl, fd,
+		     (unsigned long)TIOCSTI | 0x100000000ULL, &c);
+	err = errno;
+	close(fd);
+	report_result("ioctl:TIOCSTI-high", A_EPERM, rc, err);
+#else
+	SKIP("ioctl:TIOCSTI-high");
+#endif
+}
+
+static void t_ioctl_tioclinux_high(void)
+{
+#if defined(SYS_ioctl) && (defined(__LP64__) || defined(_LP64))
+	char c = 0;
+	int fd, err;
+	long rc;
+
+	fd = open_devnull();
+	if (fd < 0) {
+		printf("SKIP ioctl:TIOCLINUX-high no-devnull\n");
+		return;
+	}
+	errno = 0;
+	rc = syscall(SYS_ioctl, fd,
+		     (unsigned long)TIOCLINUX | 0x100000000ULL, &c);
+	err = errno;
+	close(fd);
+	report_result("ioctl:TIOCLINUX-high", A_EPERM, rc, err);
+#else
+	SKIP("ioctl:TIOCLINUX-high");
+#endif
+}
+
 static void t_perf_event_open(void)
 {
 #ifdef SYS_perf_event_open
@@ -484,6 +534,16 @@ static void t_personality_bad(void)
 #endif
 }
 
+static void t_personality_domain(void)
+{
+#ifdef SYS_personality
+	report("personality:domain", A_EPERM,
+	       syscall(SYS_personality, 1));
+#else
+	SKIP("personality:domain");
+#endif
+}
+
 static void t_personality_good(void)
 {
 #ifdef SYS_personality
@@ -491,6 +551,23 @@ static void t_personality_good(void)
 	       syscall(SYS_personality, PER_LINUX));
 #else
 	SKIP("personality:good");
+#endif
+}
+
+static void t_personality_linux32(void)
+{
+#ifdef SYS_personality
+	long rc;
+	int err;
+
+	errno = 0;
+	rc = syscall(SYS_personality, PER_LINUX32);
+	err = errno;
+	if (rc != -1)
+		syscall(SYS_personality, PER_LINUX);
+	report_result("personality:linux32", A_ALLOW, rc, err);
+#else
+	SKIP("personality:linux32");
 #endif
 }
 
@@ -645,10 +722,14 @@ int main(void)
 	t_ioctl_tiocsti();
 	t_ioctl_tioclinux();
 	t_ioctl_allowed();
+	t_ioctl_tiocsti_high();
+	t_ioctl_tioclinux_high();
 	t_perf_event_open();
 	t_ptrace();
 	t_personality_bad();
+	t_personality_domain();
 	t_personality_good();
+	t_personality_linux32();
 	t_modify_ldt();
 	t_io_uring_setup();
 	t_io_uring_enter();
@@ -681,6 +762,18 @@ fi
 
 # shellcheck source=../bwrap-common.sh disable=SC1091
 . "$_root/bwrap-common.sh"
+
+if ! bwrap --unshare-all --ro-bind / / -- /usr/bin/true \
+        >"$_tmp/preflight" 2>&1; then
+    cat "$_tmp/preflight" >&2
+    if grep -Eqi 'namespace|permission|operation not permitted|unshare' \
+            "$_tmp/preflight"; then
+        echo "seccomp-check: unprivileged sandbox unavailable" >&2
+        exit 77
+    fi
+    echo "seccomp-check: bwrap preflight failed" >&2
+    exit 1
+fi
 
 _args=()
 if (( _dynamic )); then

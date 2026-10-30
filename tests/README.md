@@ -4,7 +4,7 @@
 
 | File | Language | Framework | What it tests |
 |------|----------|-----------|---------------|
-| `tests/test.sh` | Bash | Custom assertions | Source guard (re-source idempotency), function definitions (all 28 public functions exist), VERSION variable, `bwrap_base` (non-empty output, `--ro-bind /usr`, `--proc /proc`, `--tmpfs /tmp`), `bwrap_home_tmpfs` (`--tmpfs $HOME`, `--dir ~/.config`), `bwrap_env_base` (HOME/PATH/XDG_RUNTIME_DIR env vars), `bwrap_sandbox` (`--unshare-all`, `--die-with-parent`, `--new-session`, network/new-session toggles), `bwrap_no_hardened_malloc` (stub `/usr/lib/libhardened_malloc.so.empty` bound over both hardened_malloc variants when installed), `bwrap_runtime_dir` (XDG_RUNTIME_DIR directory creation), `bwrap_gpu`/`bwrap_lib64` (no-error execution, non-empty output), `bwrap_bind_dir` (directory creation, `--bind` flags, multiple dirs), `bwrap_ro_bind_dir` (existing dir bound, nonexistent dir skipped), `require_dir` (existing dir passes, missing dir fails), `bwrap_fcitx` (QT_IM_MODULE/XMODIFIERS env vars), `bwrap_gui_setup` (composite: base + home_tmpfs, with/without network, GPU toggle, exact composition), `bwrap_gui_finish` (composite: sandbox flags, malloc=no variant, dbus modes, seccomp default/none/rejection), `bwrap_seccomp` (none/default, missing/invalid/arch-mismatched blobs fail closed, allowlist compile+cache, fail-closed errors, duplicate `--seccomp`), `bwrap_ssh_agent` (empty without SSH_AUTH_SOCK), `bwrap_dbus_system` (no-error execution), `bwrap_exec` (exec vs. proxy branch selection, exact argument forwarding, exit-status propagation, D-Bus proxy cleanup, stdin inheritance — regression test for commit d308327) |
+| `tests/test.sh` | Bash | Custom assertions | Source guard (re-source idempotency), function definitions (all 28 public functions exist), VERSION variable, `bwrap_base` (non-empty output, `--ro-bind /usr`, `--proc /proc`, `--tmpfs /tmp`), `bwrap_home_tmpfs` (`--tmpfs $HOME`, `--dir ~/.config`), `bwrap_env_base` (HOME/PATH/XDG_RUNTIME_DIR env vars), `bwrap_sandbox` (`--unshare-all`, `--die-with-parent`, `--new-session`, network/new-session toggles), `bwrap_no_hardened_malloc` (stub `/usr/lib/libhardened_malloc.so.empty` bound over both hardened_malloc variants when installed), `bwrap_runtime_dir` (XDG_RUNTIME_DIR directory creation), `bwrap_gpu`/`bwrap_lib64` (no-error execution, non-empty output), `bwrap_bind_dir` (directory creation, `--bind` flags, multiple dirs), `bwrap_ro_bind_dir` (existing dir bound, nonexistent dir skipped), `require_dir` (existing dir passes, missing dir fails), `bwrap_fcitx` (QT_IM_MODULE/XMODIFIERS env vars), `bwrap_gui_setup` (composite: base + home_tmpfs, with/without network, GPU toggle, exact composition), `bwrap_gui_finish` (composite: sandbox flags, malloc=no variant, dbus modes, seccomp default/none/rejection), `bwrap_seccomp` (none/default, missing/invalid/arch-mismatched blobs fail closed, allowlist compile+cache, filter fd cleanup, fail-closed errors, duplicate `--seccomp`), `bwrap_ssh_agent` (empty without SSH_AUTH_SOCK), `bwrap_dbus_system` (no-error execution), `bwrap_exec` (exec vs. proxy branch selection, exact argument forwarding, exit-status propagation, D-Bus proxy cleanup, stdin inheritance — regression test for commit d308327) |
 | `tests/seccomp-check.sh` | Bash + embedded C | Self-contained probe | Builds the default blocklist, runs an embedded C probe in a real `bwrap --unshare-all` sandbox, invokes every rule from `seccomp/default.conf`, checks `EPERM`/`ENOSYS`, verifies argument conditions (`clone`, `ioctl`, `personality`), and fails if a config rule has no test or the filter is inactive |
 
 ## Running
@@ -100,7 +100,8 @@ dynamic fallback), and runs it under `bwrap --unshare-all` with the default
 `--seccomp` blob. Each rule in `seccomp/default.conf` is invoked and must return
 the configured errno; the probe also checks the argument-conditioned rules
 (`clone` with `CLONE_NEWUSER` vs. `SIGCHLD`, `ioctl` `TIOCSTI`/`TIOCLINUX` vs.
-`FIONREAD`, `personality` non-`PER_LINUX` vs. `PER_LINUX`). A canary aborts
+`FIONREAD`, high-bit `ioctl` command aliases, `personality` other execution
+domains vs. `PER_LINUX`/`PER_LINUX32`). A canary aborts
 before any blocked syscall if the filter is not active, and the script fails if
 a rule has no corresponding test. It requires `bwrap`, the `libseccomp`
 headers, `cc`, and `make`.
@@ -119,7 +120,7 @@ The GitHub Actions workflow (`.github/workflows/ci.yml`) runs on push/PR when `b
 
 - **`shellcheck`** job: runs `shellcheck` with `-s bash` and suppressed informational codes (`SC2034`, `SC2178`, `SC2317`) on `bwrap-common.sh` and `tests/seccomp-check.sh`
 - **`test`** job: runs `bash tests/test.sh`
-- **`seccomp`** job: installs `bubblewrap`, `libseccomp-dev`, and `build-essential`, enables unprivileged user namespaces, builds the helper, and runs `tests/seccomp-check.sh`
+- **`seccomp`** job: installs `bubblewrap`, `libseccomp-dev`, and `build-essential`, enables unprivileged user namespaces, and runs `tests/seccomp-check.sh`; it retries as root only when the script reports exit status `77` (sandbox environment unavailable), so real filter failures are not masked
 
 ## Test environment
 

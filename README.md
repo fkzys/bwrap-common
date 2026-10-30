@@ -120,7 +120,7 @@ bwrap_exec "${A[@]}" -- /usr/bin/app "$@"
 | `bwrap_ssh_agent` | SSH agent socket forwarding |
 | `bwrap_hardened_malloc` | Set `LD_PRELOAD` for hardened_malloc (default or light variant) |
 | `bwrap_no_hardened_malloc` | Disable hardened_malloc for incompatible apps |
-| `bwrap_exec` | Run bwrap as foreground child, clean up D-Bus proxy on exit; falls back to `exec bwrap` when no proxies are active |
+| `bwrap_exec` | Run bwrap as foreground child, clean up D-Bus proxy and seccomp filter fds on exit; falls back to `exec bwrap` when no proxies are active |
 | `require_dir` | Validate that directories exist, exit on missing |
 
 ### High-level composites
@@ -199,15 +199,24 @@ The allowlist always permits the syscalls needed by the new process
 Build/install:
 
 - `make build` compiles `build/bwrap-seccomp-gen` and generates
-  `build/seccomp/default.$(uname -m).bpf`.
+  `build/seccomp/default.$(uname -m).bpf`; set `ARCH=` to build a blob for
+  another libseccomp-supported target architecture.
+- `bwrap-seccomp-gen --strict` rejects syscall names that no supported
+  architecture knows; target-specific legacy names are still skipped with a
+  warning.
 - `make install` installs the helper to
   `/usr/lib/bwrap-common/bwrap-seccomp-gen` and the blob to
   `/usr/lib/bwrap-common/seccomp/`.
 - `gcc` and the `libseccomp` headers are build-time dependencies;
   `libseccomp` is a runtime dependency.
 
+`ioctl` command comparisons are masked to 32 bits because the kernel truncates
+the command to `unsigned int`; this prevents high-bit aliases of `TIOCSTI` and
+`TIOCLINUX` from bypassing the filter.
+
 `./tests/seccomp-check.sh` invokes every rule in `seccomp/default.conf` inside
-a sandbox with the default filter and verifies the expected `EPERM`/`ENOSYS`.
+a sandbox with the default filter and verifies the expected `EPERM`/`ENOSYS`,
+including high-bit `ioctl` aliases.
 
 | Variable | Default |
 |---|---|
