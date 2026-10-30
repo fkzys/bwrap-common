@@ -329,7 +329,7 @@ _bwrap_seccomp_close_fds() {
 }
 
 # Internal: install cleanup only when the caller has no EXIT trap.
-_bwrap_seccomp_install_cleanup() {
+_bwrap_install_cleanup() {
     if [[ -z "$(trap -p EXIT)" ]]; then
         trap '_bwrap_cleanup' EXIT
     fi
@@ -391,7 +391,7 @@ _bwrap_seccomp_use() {
         return 1
     fi
     _BWRAP_SECCOMP_FDS+=("$_fd")
-    _bwrap_seccomp_install_cleanup
+    _bwrap_install_cleanup
     _arr+=(--seccomp "$_fd")
     return 0
 }
@@ -596,7 +596,7 @@ bwrap_dbus_filtered() {
     _BWRAP_DBUS_PROXY_PIDS+=("$proxy_pid")
     _BWRAP_DBUS_PROXY_SOCKETS+=("$proxy_sock")
 
-    trap '_bwrap_cleanup' EXIT
+    _bwrap_install_cleanup
 
     local _attempts=0
     while [[ ! -S "$proxy_sock" ]]; do

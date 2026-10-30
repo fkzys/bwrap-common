@@ -191,6 +191,14 @@ missing generator, or a compile failure returns non-zero. It is a power-user
 API and is not accepted through `bwrap_gui_finish`, which only accepts
 `default`/`none`.
 
+The filter descriptor stays open so bwrap can inherit it. In proxy mode
+`bwrap_exec` closes the parent copy after starting bwrap; if you invoke `bwrap`
+directly, the descriptor remains open until the shell exits.
+
+The blocklist uses one comparison per argument (a libseccomp limitation), so the
+`personality(0xffffffff)` query form is blocked together with other values above
+`PER_LINUX32`; callers that only query the current persona will see `EPERM`.
+
 The allowlist always permits the syscalls needed by the new process
 (`execve`, `execveat`, `exit`, `exit_group`, `write`, `rt_sigreturn`,
 `sigreturn`) and by bubblewrap's pid 1, which receives the same filter
@@ -199,8 +207,8 @@ The allowlist always permits the syscalls needed by the new process
 Build/install:
 
 - `make build` compiles `build/bwrap-seccomp-gen` and generates
-  `build/seccomp/default.$(uname -m).bpf`; set `ARCH=` to build a blob for
-  another libseccomp-supported target architecture.
+  `build/seccomp/default.$(uname -m).bpf` with `--strict`; set `ARCH=` to build
+  a blob for another libseccomp-supported target architecture.
 - `bwrap-seccomp-gen --strict` rejects syscall names that no supported
   architecture knows; target-specific legacy names are still skipped with a
   warning.
