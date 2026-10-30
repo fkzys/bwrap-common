@@ -485,6 +485,22 @@ else
     ok "seccomp filter fd is closed by cleanup"
 fi
 
+TRAP_LOG="${TMPDIR_TEST}/cleanup-trap.log"
+(
+    trap 'printf "caller rc=%s\n" "$?" >> "$TRAP_LOG"' EXIT
+    _bwrap_cleanup() { printf 'cleanup\n' >> "$TRAP_LOG"; }
+    _bwrap_install_cleanup
+    _bwrap_install_cleanup
+    exit 7
+)
+TRAP_RC=$?
+TRAP_OUT=$(cat "$TRAP_LOG" 2>/dev/null)
+if [[ $TRAP_RC -eq 7 && "$TRAP_OUT" == $'cleanup\ncaller rc=7' ]]; then
+    ok "existing EXIT trap is preserved and cleanup runs once"
+else
+    fail "EXIT trap chain failed (rc=$TRAP_RC, out=$TRAP_OUT)"
+fi
+
 SC=()
 BWRAP_SECCOMP_DIR="${TMPDIR_TEST}/missing" bwrap_seccomp SC default 2>/dev/null
 SC_RC=$?

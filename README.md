@@ -143,6 +143,11 @@ and the provided rules, waits for the proxy socket, and binds it into the
 sandbox as `$XDG_RUNTIME_DIR/bus`. Proxy processes are tracked and cleaned
 up automatically by `bwrap_exec`.
 
+The library installs an `EXIT` trap for proxy and seccomp-fd cleanup. If the
+caller already has an `EXIT` trap, it is preserved: cleanup runs first, then
+the original trap, and the shell exit status is preserved. `exec bwrap`
+bypasses shell traps, so use `bwrap_exec` with filtered D-Bus.
+
 If `xdg-dbus-proxy` is not installed, `bwrap_dbus_filtered` and
 `bwrap_dbus_common` return non-zero and do not fall back to an unfiltered
 bus; `bwrap_gui_finish` propagates that failure. Use `dbus=none` to run

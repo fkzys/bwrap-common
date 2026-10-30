@@ -328,11 +328,35 @@ _bwrap_seccomp_close_fds() {
     _BWRAP_SECCOMP_FDS=()
 }
 
-# Internal: install cleanup only when the caller has no EXIT trap.
-_bwrap_install_cleanup() {
-    if [[ -z "$(trap -p EXIT)" ]]; then
-        trap '_bwrap_cleanup' EXIT
+# Internal: run cleanup, then the caller's original EXIT trap.
+_bwrap_exit_trap() {
+    local _status=$?
+    local _previous="${_BWRAP_PREVIOUS_EXIT_TRAP:-}"
+    _bwrap_cleanup
+    if [[ -n "$_previous" ]]; then
+        (exit "$_status")
+        eval "$_previous"
     fi
+    exit "$_status"
+}
+
+# Internal: install cleanup without dropping an existing EXIT trap.
+_bwrap_install_cleanup() {
+    local _current _previous
+    _current=$(trap -p EXIT)
+    if [[ "$_current" == *"_bwrap_exit_trap"* || "$_current" == *"_bwrap_cleanup"* ]]; then
+        return 0
+    fi
+
+    # Capture the caller's trap without slicing trap -p output.  The temporary
+    # trap() function receives the command as $2 when eval parses the builtin's
+    # output; it does not execute the caller's command.
+    _previous=$(
+        trap() { printf '%s' "$2"; }
+        eval "$(builtin trap -p EXIT)"
+    )
+    _BWRAP_PREVIOUS_EXIT_TRAP="$_previous"
+    trap '_bwrap_exit_trap' EXIT
 }
 
 # Internal: validate FILE, open it and append --seccomp FD to ARRAYNAME.
