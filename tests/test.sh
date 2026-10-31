@@ -121,8 +121,8 @@ TMPDIR_TEST=$(mktemp -d) || {
     echo "FATAL: cannot create temporary directory" >&2
     exit 1
 }
-if [[ ! -d "$TMPDIR_TEST" || ! -w "$TMPDIR_TEST" ]]; then
-    echo "FATAL: TMPDIR_TEST is not a writable directory: $TMPDIR_TEST" >&2
+if [[ ! -w "$TMPDIR_TEST" ]]; then
+    echo "FATAL: TMPDIR_TEST is not writable: $TMPDIR_TEST" >&2
     exit 1
 fi
 trap 'rm -rf "$TMPDIR_TEST"' EXIT
@@ -203,6 +203,7 @@ has_pair A "--bind" "/dev/shm"   && fail "default shm binds host /dev/shm" || ok
 
 SHM_BIND=()
 bwrap_base SHM_BIND bind
+has_sequence SHM_BIND "--bind" "/dev/shm" "/dev/shm" && ok "shm=bind has exact source and target path" || fail "shm=bind source/target mismatch"
 has_ordered_pairs SHM_BIND "--dev" "/dev" "--bind" "/dev/shm" "--ro-bind" "/etc" && ok "shm=bind is ordered after --dev and before --ro-bind /etc" || fail "shm=bind ordering missing"
 has_pair SHM_BIND "--tmpfs" "/dev/shm" && fail "shm=bind unexpectedly adds tmpfs" || ok "shm=bind does not add tmpfs"
 has_pair SHM_BIND "--perms" "1777" && fail "shm=bind unexpectedly adds perms" || ok "shm=bind does not add perms"
