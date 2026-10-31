@@ -50,7 +50,7 @@ Iterates over all 28 expected public functions and verifies each is defined via 
 
 Each function is called with a fresh empty array, then the array contents are inspected:
 
-- **`bwrap_base`**: core filesystem layout — verifies `--ro-bind /usr`, `--proc /proc`, `--tmpfs /tmp` are present; default `/dev/shm` is the adjacent sequence `--perms 1777 --tmpfs /dev/shm`, `shm=bind` uses the exact sequence `--bind /dev/shm /dev/shm` immediately before `--ro-bind /etc`, explicit `shm=tmpfs` matches the default, and an invalid mode is rejected with the `bwrap_base` message
+- **`bwrap_base`**: core filesystem layout — verifies `--ro-bind /usr`, `--proc /proc`, `--tmpfs /tmp` are present; default `/dev/shm` is the adjacent sequence `--perms 1777 --tmpfs /dev/shm`, `shm=bind` uses `--bind /dev/shm /dev/shm` and is ordered after `--dev /dev` and before `--ro-bind /etc`, explicit `shm=tmpfs` matches the default, and an invalid mode is rejected with the `bwrap_base` message
 - **`bwrap_home_tmpfs`**: verifies `--tmpfs $HOME` and `--dir ~/.config` for the XDG skeleton
 - **`bwrap_env_base`**: verifies `--setenv` for `HOME`, `PATH`, `XDG_RUNTIME_DIR`
 - **`bwrap_sandbox`**: verifies `--unshare-all`, `--die-with-parent`, `--new-session` in default mode; tests `--share-net` with `network=yes`; tests `--new-session` absence with `new_session=no`

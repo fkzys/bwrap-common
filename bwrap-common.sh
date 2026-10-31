@@ -23,18 +23,22 @@ require_dir() {
     done
 }
 
+_bwrap_shm_valid() {
+    case "${1:-}" in
+        tmpfs|bind) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 # ── Common base bwrap args ────────────────────────────────────
 # $2 = shm mode: "tmpfs" (default, private) or "bind" (host /dev/shm)
 bwrap_base() {
     local -n _arr=$1
     local _shm="${2:-tmpfs}"
-    case "$_shm" in
-        tmpfs|bind) ;;
-        *)
-            echo "bwrap_base: invalid shm mode '$_shm' (expected tmpfs or bind)" >&2
-            return 2
-            ;;
-    esac
+    if ! _bwrap_shm_valid "$_shm"; then
+        echo "bwrap_base: invalid shm mode '$_shm' (expected tmpfs or bind)" >&2
+        return 2
+    fi
     _arr+=(
         --ro-bind /usr /usr
         --symlink /usr/bin /bin
@@ -541,13 +545,10 @@ bwrap_ssh_agent() {
 # $4 = shm mode: "tmpfs" (default, private) or "bind" (host /dev/shm)
 bwrap_gui_setup() {
     local _v=$1 _net="${2:-no}" _gpu="${3:-no}" _shm="${4:-tmpfs}"
-    case "$_shm" in
-        tmpfs|bind) ;;
-        *)
-            echo "bwrap_gui_setup: invalid shm mode '$_shm' (expected tmpfs or bind)" >&2
-            return 2
-            ;;
-    esac
+    if ! _bwrap_shm_valid "$_shm"; then
+        echo "bwrap_gui_setup: invalid shm mode '$_shm' (expected tmpfs or bind)" >&2
+        return 2
+    fi
     bwrap_base "$_v" "$_shm" || return
     bwrap_lib64 "$_v"
     [[ "$_gpu" == "yes" ]] && bwrap_gpu "$_v"

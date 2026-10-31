@@ -75,6 +75,26 @@ has_sequence() {
     return 1
 }
 
+has_ordered_pairs() {
+    local -n _arr=$1; shift
+    local _len=${#_arr[@]} _i=0 _flag _val _found
+    while (( $# >= 2 )); do
+        _flag=$1
+        _val=$2
+        shift 2
+        _found=0
+        for ((; _i < _len - 1; _i++)); do
+            if [[ "${_arr[$_i]}" == "$_flag" && "${_arr[$((_i + 1))]}" == "$_val" ]]; then
+                _i=$((_i + 2))
+                _found=1
+                break
+            fi
+        done
+        (( _found )) || return 1
+    done
+    return 0
+}
+
 count_flag() {
     local -n _arr=$1; local flag=$2; local count=0
     for arg in "${_arr[@]}"; do [[ "$arg" == "$flag" ]] && count=$((count + 1)); done
@@ -97,7 +117,14 @@ arrays_equal() {
 
 # ── Setup ───────────────────────────────────────────────────
 
-TMPDIR_TEST=$(mktemp -d)
+TMPDIR_TEST=$(mktemp -d) || {
+    echo "FATAL: cannot create temporary directory" >&2
+    exit 1
+}
+if [[ ! -d "$TMPDIR_TEST" || ! -w "$TMPDIR_TEST" ]]; then
+    echo "FATAL: TMPDIR_TEST is not a writable directory: $TMPDIR_TEST" >&2
+    exit 1
+fi
 trap 'rm -rf "$TMPDIR_TEST"' EXIT
 
 # ── seccomp fixtures ────────────────────────────────────────
@@ -176,7 +203,7 @@ has_pair A "--bind" "/dev/shm"   && fail "default shm binds host /dev/shm" || ok
 
 SHM_BIND=()
 bwrap_base SHM_BIND bind
-has_sequence SHM_BIND "--bind" "/dev/shm" "/dev/shm" "--ro-bind" "/etc" "/etc" && ok "shm=bind mount is immediately before --ro-bind /etc" || fail "shm=bind ordering sequence missing"
+has_ordered_pairs SHM_BIND "--dev" "/dev" "--bind" "/dev/shm" "--ro-bind" "/etc" && ok "shm=bind is ordered after --dev and before --ro-bind /etc" || fail "shm=bind ordering missing"
 has_pair SHM_BIND "--tmpfs" "/dev/shm" && fail "shm=bind unexpectedly adds tmpfs" || ok "shm=bind does not add tmpfs"
 has_pair SHM_BIND "--perms" "1777" && fail "shm=bind unexpectedly adds perms" || ok "shm=bind does not add perms"
 
