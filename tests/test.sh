@@ -274,6 +274,7 @@ has_pair C "--setenv" "HOME"            && ok "sets HOME"            || fail "HO
 has_pair C "--setenv" "PATH"            && ok "sets PATH"            || fail "PATH missing"
 has_sequence C "--setenv" "TERM" "${TERM:-xterm-256color}" && ok "sets TERM" || fail "TERM missing"
 has_pair C "--setenv" "XDG_RUNTIME_DIR" && ok "sets XDG_RUNTIME_DIR" || fail "XDG_RUNTIME_DIR missing"
+has_sequence C "--setenv" "XDG_CACHE_HOME" "${HOME}/.cache" && ok "normalizes XDG_CACHE_HOME to private HOME/.cache" || fail "XDG_CACHE_HOME not normalized"
 
 # ── bwrap_sandbox ──────────────────────────────────────────
 

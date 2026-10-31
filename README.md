@@ -102,6 +102,30 @@ The default policy intentionally does not forward `USER`, `TZ`, `LC_*`,
 locale defaults apply inside the sandbox; add explicit `--setenv` options for
 any application that needs a specific value.
 
+`XDG_CACHE_HOME` is normalized to `$HOME/.cache` inside the private home
+tmpfs. If the host cache lives elsewhere, bind it explicitly **after**
+`bwrap_env_base`/`bwrap_gui_finish` so the mount overlays the tmpfs cache
+directory:
+
+```sh
+CACHE_DIR=/mnt/ssd/cache
+mkdir -p "$CACHE_DIR"
+A+=(--bind "$CACHE_DIR" "$HOME/.cache")
+```
+
+`XDG_CACHE_HOME` already points at `$HOME/.cache`, so no `--setenv` is needed.
+
+If the sandbox must expose the cache at its original host path instead, bind it
+to that same path and set the variable explicitly:
+
+```sh
+A+=(--bind "$CACHE_DIR" "$CACHE_DIR" --setenv XDG_CACHE_HOME "$CACHE_DIR")
+```
+
+Use this second form only when the original path is part of the application's
+contract. Both variants give the sandbox write access to the host cache; use a
+dedicated cache directory if that access is not desired.
+
 Pass `no` as `bwrap_base`'s third argument, or as `bwrap_gui_setup`'s fifth
 argument, to opt out and inherit the host environment. Opting out re-exposes
 secrets and loader/interpreter variables from the calling environment.
@@ -127,7 +151,7 @@ secrets and loader/interpreter variables from the calling environment.
 | `bwrap_fcitx` | fcitx5 input method sockets + env |
 | `bwrap_home_tmpfs` | tmpfs `$HOME` with XDG skeleton |
 | `bwrap_runtime_dir` | XDG_RUNTIME_DIR with correct permissions |
-| `bwrap_env_base` | `HOME`, `LANG`, `PATH`, `TERM`, `XDG_RUNTIME_DIR`, `XDG_CACHE_HOME` |
+| `bwrap_env_base` | `HOME`, `LANG`, `PATH`, `TERM`, `XDG_RUNTIME_DIR`, `XDG_CACHE_HOME=$HOME/.cache` |
 | `bwrap_sandbox` | `--unshare-all`, optional `--share-net` / `--new-session` |
 | `bwrap_seccomp` | Add `--seccomp` from the precompiled default blocklist or a compiled syscall allowlist |
 | `bwrap_resolve_files` | Resolve file arguments to bind mounts |
