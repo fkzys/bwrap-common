@@ -111,24 +111,31 @@ locale defaults apply inside the sandbox; add explicit `--setenv` options for
 any application that needs a specific value.
 
 `XDG_CACHE_HOME` is normalized to `$HOME/.cache` inside the private home
-tmpfs. If the host cache lives elsewhere, bind it explicitly **after**
-`bwrap_env_base`/`bwrap_gui_finish` so the mount overlays the tmpfs cache
-directory:
+tmpfs. If the app's cache lives elsewhere, bind only that app's cache directory
+explicitly **after** `bwrap_env_base`/`bwrap_gui_finish` so the mount overlays
+the tmpfs cache directory:
 
 ```sh
-CACHE_DIR=/mnt/ssd/cache
+CACHE_DIR=/mnt/ssd/cache/app
 mkdir -p "$CACHE_DIR"
-A+=(--bind "$CACHE_DIR" "$HOME/.cache")
+A+=(--bind "$CACHE_DIR" "$HOME/.cache/app")
 ```
 
+Only the `app` cache is exposed; the rest of `$HOME/.cache` stays private.
 `XDG_CACHE_HOME` already points at `$HOME/.cache`, so no `--setenv` is needed.
+This form cannot use `bwrap_bind_dir`, because that helper always binds a path
+to itself rather than to a different target.
 
-If the sandbox must expose the cache at its original host path instead, bind it
-to that same path and set the variable explicitly:
+If the application treats `XDG_CACHE_HOME` as its own cache directory and must
+expose it at the original host path, use `bwrap_bind_dir` and override the
+variable explicitly:
 
 ```sh
-A+=(--bind "$CACHE_DIR" "$CACHE_DIR" --setenv XDG_CACHE_HOME "$CACHE_DIR")
+bwrap_bind_dir A "$CACHE_DIR"
+A+=(--setenv XDG_CACHE_HOME "$CACHE_DIR")
 ```
+
+Both calls append to the same argument array; bwrap still receives one command.
 
 Use this second form only when the original path is part of the application's
 contract. Both variants give the sandbox write access to the host cache; use a
