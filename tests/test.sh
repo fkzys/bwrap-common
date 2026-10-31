@@ -61,6 +61,32 @@ has_triple() {
     return 1
 }
 
+has_sequence() {
+    local -n _arr=$1; shift
+    local -a _want=("$@")
+    local _n=${#_want[@]} _i _j
+    (( _n > 0 && _n <= ${#_arr[@]} )) || return 1
+    for ((_i=0; _i <= ${#_arr[@]} - _n; _i++)); do
+        for ((_j=0; _j < _n; _j++)); do
+            [[ "${_arr[$((_i + _j))]}" == "${_want[$_j]}" ]] || break
+        done
+        (( _j == _n )) && return 0
+    done
+    return 1
+}
+
+index_of_pair() {
+    local -n _arr=$1; local flag=$2 val=$3
+    local i
+    for ((i=0; i<${#_arr[@]}-1; i++)); do
+        if [[ "${_arr[$i]}" == "$flag" && "${_arr[$((i+1))]}" == "$val" ]]; then
+            printf '%s\n' "$i"
+            return 0
+        fi
+    done
+    return 1
+}
+
 count_flag() {
     local -n _arr=$1; local flag=$2; local count=0
     for arg in "${_arr[@]}"; do [[ "$arg" == "$flag" ]] && count=$((count + 1)); done
@@ -157,15 +183,21 @@ bwrap_base A
 has_pair A "--ro-bind" "/usr"    && ok "--ro-bind /usr present"         || fail "--ro-bind /usr missing"
 has_pair A "--proc" "/proc"      && ok "--proc /proc present"           || fail "--proc /proc missing"
 has_pair A "--tmpfs" "/tmp"      && ok "--tmpfs /tmp present"           || fail "--tmpfs /tmp missing"
-has_pair A "--perms" "1777"      && ok "default shm uses private tmpfs perms 1777" || fail "default shm perms missing"
-has_pair A "--tmpfs" "/dev/shm"  && ok "default shm uses private tmpfs" || fail "default shm tmpfs missing"
+has_sequence A "--perms" "1777" "--tmpfs" "/dev/shm" && ok "default shm uses adjacent private tmpfs perms 1777" || fail "default shm tmpfs sequence missing"
 has_pair A "--bind" "/dev/shm"   && fail "default shm binds host /dev/shm" || ok "default shm does not bind host /dev/shm"
 
 SHM_BIND=()
 bwrap_base SHM_BIND bind
-has_pair SHM_BIND "--bind" "/dev/shm" && ok "shm=bind binds host /dev/shm" || fail "shm=bind host bind missing"
+has_sequence SHM_BIND "--bind" "/dev/shm" "/dev/shm" && ok "shm=bind has exact host bind sequence" || fail "shm=bind host bind sequence missing"
 has_pair SHM_BIND "--tmpfs" "/dev/shm" && fail "shm=bind unexpectedly adds tmpfs" || ok "shm=bind does not add tmpfs"
 has_pair SHM_BIND "--perms" "1777" && fail "shm=bind unexpectedly adds perms" || ok "shm=bind does not add perms"
+BIND_POS=$(index_of_pair SHM_BIND "--bind" "/dev/shm")
+ETC_POS=$(index_of_pair SHM_BIND "--ro-bind" "/etc")
+if [[ -n "$BIND_POS" && -n "$ETC_POS" && "$BIND_POS" -lt "$ETC_POS" ]]; then
+    ok "shm=bind mount precedes --ro-bind /etc"
+else
+    fail "shm=bind ordering (bind=$BIND_POS, etc=$ETC_POS)"
+fi
 
 SHM_TMPFS=()
 bwrap_base SHM_TMPFS tmpfs
@@ -326,8 +358,15 @@ has_pair P "--tmpfs" "/dev/shm" && ok "default gui setup uses private shm" || fa
 
 SETUP_SHM_BIND=()
 bwrap_gui_setup SETUP_SHM_BIND no no bind
-has_pair SETUP_SHM_BIND "--bind" "/dev/shm" && ok "gui setup forwards shm=bind" || fail "gui setup did not forward shm=bind"
+has_sequence SETUP_SHM_BIND "--bind" "/dev/shm" "/dev/shm" && ok "gui setup forwards exact shm=bind sequence" || fail "gui setup did not forward shm=bind"
 has_pair SETUP_SHM_BIND "--tmpfs" "/dev/shm" && fail "gui setup shm=bind added tmpfs" || ok "gui setup shm=bind omits tmpfs"
+
+SETUP_SHM_INVALID=()
+if bwrap_gui_setup SETUP_SHM_INVALID no no invalid 2>/dev/null; then
+    fail "gui setup accepted invalid shm mode"
+else
+    ok "gui setup rejects invalid shm mode"
+fi
 
 Q=()
 bwrap_gui_setup Q yes

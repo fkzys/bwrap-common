@@ -31,7 +31,9 @@ bwrap_base() {
     case "$_shm" in
         tmpfs|bind) ;;
         *)
-            echo "bwrap_base: invalid shm mode '$_shm' (expected tmpfs or bind)" >&2
+            local _who="bwrap_base"
+            [[ "${FUNCNAME[1]:-}" == "bwrap_gui_setup" ]] && _who="${FUNCNAME[1]}"
+            echo "$_who: invalid shm mode '$_shm' (expected tmpfs or bind)" >&2
             return 2
             ;;
     esac
