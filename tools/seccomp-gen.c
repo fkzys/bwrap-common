@@ -15,6 +15,9 @@
 
 #define PROG "bwrap-seccomp-gen"
 
+/* Exit status for a target architecture not recognised by this libseccomp. */
+#define EXIT_ARCH_UNSUPPORTED 3
+
 struct symbol {
 	const char *name;
 	uint64_t value;
@@ -146,7 +149,7 @@ static int select_arch(scmp_filter_ctx ctx, const char *name, uint32_t *arch)
 	if (target == 0) {
 		fprintf(stderr, "%s: unsupported architecture '%s'\n",
 			PROG, name);
-		return 1;
+		return EXIT_ARCH_UNSUPPORTED;
 	}
 
 	native = seccomp_arch_native();
@@ -264,10 +267,9 @@ static int run_blocklist(const char *path, const char *out,
 		fclose(f);
 		return 1;
 	}
-	if (select_arch(ctx, arch_name, &arch) != 0) {
-		rc = 1;
+	rc = select_arch(ctx, arch_name, &arch);
+	if (rc != 0)
 		goto done;
-	}
 
 	while ((nread = getline(&line, &linecap, f)) != -1) {
 		struct scmp_arg_cmp cmp = { 0 };
@@ -464,7 +466,8 @@ static int run_allowlist(const char *spec, const char *out,
 		fprintf(stderr, "%s: cannot initialize seccomp filter\n", PROG);
 		return 1;
 	}
-	if (select_arch(ctx, arch_name, &arch) != 0)
+	rc = select_arch(ctx, arch_name, &arch);
+	if (rc != 0)
 		goto done;
 
 	for (i = 0; i < sizeof(lifelines) / sizeof(lifelines[0]); i++) {

@@ -109,10 +109,11 @@ with an empty `PATH` so `xdg-dbus-proxy` is unavailable:
 header-only blob from an empty blocklist for each architecture with `--arch`,
 and compares bytes 12–15 with `_bwrap_seccomp_arch_magic()`. This catches drift
 between the shell table and libseccomp's emitted `AUDIT_ARCH` value, including
-endianness.
-libseccomp can cross-add only a subset of architectures; unsupported targets
-are reported as `SKIP`. The s390x CI job runs the same script natively so the
-big-endian s390x entry is checked against a real generated blob.
+endianness. Targets not recognised by the local libseccomp build are reported
+as `SKIP` using the generator's exit status 3 (not stderr text matching); all
+other generation failures are test failures. The s390x CI job runs the same
+script natively so the big-endian s390x entry is checked against a real
+generated blob.
 
 ### Seccomp end-to-end check (`seccomp-check.sh`)
 

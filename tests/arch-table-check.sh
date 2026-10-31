@@ -2,9 +2,10 @@
 # arch-table-check.sh — verify _bwrap_seccomp_arch_magic() against the real
 # BPF header emitted by bwrap-seccomp-gen --arch.
 #
-# Some target architectures cannot be cross-added by libseccomp (for example,
-# big-endian s390x on x86_64).  Those cases are reported as SKIP; run this
-# script natively on the target architecture to check its native entry.
+# Architectures not recognised by the local libseccomp build are reported as
+# SKIP using the generator's dedicated exit status, not by matching stderr
+# text.  Run this script natively on the target architecture to check its
+# native entry.
 
 set -euo pipefail
 
@@ -49,13 +50,16 @@ for _arch in "${_archs[@]}"; do
 
     _out="$_tmp/$_arch.bpf"
     _err="$_tmp/$_arch.err"
-    if ! "$_gen" --blocklist "$_tmp/min.conf" --arch "$_arch" -o "$_out" 2>"$_err"; then
-        if grep -Eq 'unsupported architecture|cannot add architecture|cannot add rule.*Bad address' "$_err"; then
-            printf 'SKIP %s (%s)\n' "$_arch" "$(head -n 1 "$_err")"
+    if "$_gen" --blocklist "$_tmp/min.conf" --arch "$_arch" -o "$_out" 2>"$_err"; then
+        :
+    else
+        _gen_rc=$?
+        if (( _gen_rc == 3 )); then
+            printf 'SKIP %s (unsupported by local libseccomp)\n' "$_arch"
             _skipped=$((_skipped + 1))
             continue
         fi
-        echo "FAIL $_arch: generator failed" >&2
+        echo "FAIL $_arch: generator failed with status $_gen_rc" >&2
         cat "$_err" >&2
         _failed=1
         continue
