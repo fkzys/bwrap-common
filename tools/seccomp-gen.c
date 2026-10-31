@@ -155,13 +155,19 @@ static int select_arch(scmp_filter_ctx ctx, const char *name, uint32_t *arch)
 	if (target == native)
 		return 0;
 
+	/*
+	 * libseccomp rejects seccomp_arch_add() for a target with a different
+	 * endianness or word size while the native arch is still present.  Remove
+	 * native first, then add the requested target; this also lets a single
+	 * build cross-generate blobs for the other supported architectures.
+	 */
+	if (seccomp_arch_remove(ctx, native) < 0) {
+		fprintf(stderr, "%s: cannot remove native architecture\n", PROG);
+		return 1;
+	}
 	if (seccomp_arch_add(ctx, target) < 0) {
 		fprintf(stderr, "%s: cannot add architecture '%s'\n",
 			PROG, name);
-		return 1;
-	}
-	if (seccomp_arch_remove(ctx, native) < 0) {
-		fprintf(stderr, "%s: cannot remove native architecture\n", PROG);
 		return 1;
 	}
 

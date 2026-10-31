@@ -88,15 +88,13 @@ trap 'rm -rf "$TMPDIR_TEST"' EXIT
 
 # ── seccomp fixtures ────────────────────────────────────────
 
-SECCOMP_ARCH=$(uname -m)
+SECCOMP_ARCH=$(_bwrap_seccomp_arch)
 if ! SECCOMP_MAGIC=$(_bwrap_seccomp_arch_magic "$SECCOMP_ARCH"); then
-    # The library now rejects unknown architectures.  Keep the rest of the
-    # seccomp tests runnable on unsupported CI hosts by pinning the fixture to
-    # a known arch; the fail-closed path is covered explicitly below.
-    echo "  ! unsupported host arch '$SECCOMP_ARCH'; using x86_64 fixture"
-    SECCOMP_ARCH=x86_64
-    SECCOMP_MAGIC=$(_bwrap_seccomp_arch_magic x86_64)
-    export BWRAP_SECCOMP_ARCH=x86_64
+    # Do not silently pretend an unsupported host is x86_64.  BWRAP_SECCOMP_ARCH
+    # is an explicit opt-in for cross-arch fixture testing only.
+    echo "FATAL: unsupported host architecture '$SECCOMP_ARCH'" >&2
+    echo "Set BWRAP_SECCOMP_ARCH to a supported architecture only for cross-arch testing." >&2
+    exit 1
 fi
 
 write_fake_blob() {

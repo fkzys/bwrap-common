@@ -6,6 +6,7 @@
 |------|----------|-----------|---------------|
 | `tests/test.sh` | Bash | Custom assertions | Source guard (re-source idempotency), function definitions (all 28 public functions exist), VERSION variable, `bwrap_base` (non-empty output, `--ro-bind /usr`, `--proc /proc`, `--tmpfs /tmp`), `bwrap_home_tmpfs` (`--tmpfs $HOME`, `--dir ~/.config`), `bwrap_env_base` (HOME/PATH/XDG_RUNTIME_DIR env vars), `bwrap_sandbox` (`--unshare-all`, `--die-with-parent`, `--new-session`, network/new-session toggles), `bwrap_no_hardened_malloc` (stub `/usr/lib/libhardened_malloc.so.empty` bound over both hardened_malloc variants when installed), `bwrap_runtime_dir` (XDG_RUNTIME_DIR directory creation), `bwrap_gpu`/`bwrap_lib64` (no-error execution, non-empty output), `bwrap_bind_dir` (directory creation, `--bind` flags, multiple dirs), `bwrap_ro_bind_dir` (existing dir bound, nonexistent dir skipped), `require_dir` (existing dir passes, missing dir fails), `bwrap_fcitx` (QT_IM_MODULE/XMODIFIERS env vars), `bwrap_gui_setup` (composite: base + home_tmpfs, with/without network, GPU toggle, exact composition), `bwrap_gui_finish` (composite: sandbox flags, malloc=no variant, dbus modes with filtered default, seccomp default/none/rejection), `bwrap_seccomp` (none/default, missing/invalid/arch-mismatched blobs fail closed, allowlist compile+cache, filter fd cleanup, fail-closed errors, duplicate `--seccomp`), `bwrap_ssh_agent` (empty without SSH_AUTH_SOCK), `bwrap_dbus_system` (no-error execution), `bwrap_exec` (exec vs. proxy branch selection, exact argument forwarding, exit-status propagation, D-Bus proxy cleanup, stdin inheritance — regression test for commit d308327) |
 | `tests/seccomp-check.sh` | Bash + embedded C | Self-contained probe | Builds the default blocklist, runs an embedded C probe in a real `bwrap --unshare-all` sandbox, invokes every rule from `seccomp/default.conf`, checks `EPERM`/`ENOSYS`, verifies argument conditions (`clone`, `ioctl`, `personality`), and fails if a config rule has no test or the filter is inactive |
+| `tests/arch-table-check.sh` | Bash + `bwrap-seccomp-gen` | Generator/table cross-check | Generates a minimal BPF blob with `--arch` for each known architecture and compares header bytes 12–15 with `_bwrap_seccomp_arch_magic()`; architectures that libseccomp cannot cross-add are reported as `SKIP` |
 
 ## Running
 
@@ -17,6 +18,9 @@ bash tests/test.sh
 
 # Real seccomp end-to-end check (needs bwrap, libseccomp-dev, cc, make)
 ./tests/seccomp-check.sh
+
+# Architecture table vs. generated BPF headers (needs libseccomp-dev, cc, make)
+./tests/arch-table-check.sh
 ```
 
 ## How they work
@@ -79,6 +83,9 @@ shell-side logic without loading a real filter into the kernel:
   big-endian blob (`80000016`) is accepted, the old little-endian value is
   rejected, and mips/mips64/parisc/ppc64 mappings are covered
 - an unknown architecture fails closed instead of silently skipping the check
+- an unsupported host architecture aborts the suite instead of silently
+  substituting x86_64; `BWRAP_SECCOMP_ARCH` is only an explicit cross-arch
+  test override
 - an allowlist compiles through a fake generator once and then reuses the
   cache; the cached file is mode `0600`
 - an empty allowlist, a failing generator, and a pre-existing `--seccomp`
@@ -95,6 +102,17 @@ with an empty `PATH` so `xdg-dbus-proxy` is unavailable:
   `DBUS_SESSION_BUS_ADDRESS`
 - `dbus=none` and `dbus=unfiltered` still return 0; only `none` is guaranteed
   to add no bus arguments
+
+### Architecture table cross-check (`arch-table-check.sh`)
+
+`tests/arch-table-check.sh` builds `bwrap-seccomp-gen`, generates a
+header-only blob from an empty blocklist for each architecture with `--arch`,
+and compares bytes 12–15 with `_bwrap_seccomp_arch_magic()`. This catches drift
+between the shell table and libseccomp's emitted `AUDIT_ARCH` value, including
+endianness.
+libseccomp can cross-add only a subset of architectures; unsupported targets
+are reported as `SKIP`. The s390x CI job runs the same script natively so the
+big-endian s390x entry is checked against a real generated blob.
 
 ### Seccomp end-to-end check (`seccomp-check.sh`)
 

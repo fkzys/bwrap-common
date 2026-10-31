@@ -23,7 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - run: shellcheck -s bash -e SC2034,SC2178,SC2317 bwrap-common.sh tests/seccomp-check.sh
+      - run: shellcheck -s bash -e SC2034,SC2178,SC2317 bwrap-common.sh tests/seccomp-check.sh tests/arch-table-check.sh
 
   test:
     runs-on: ubuntu-latest
@@ -36,11 +36,17 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: docker/setup-qemu-action@v4
-      - name: Run shell tests on s390x
+      - name: Run shell tests and native arch table check on s390x
         run: |
           docker run --rm --platform linux/s390x \
-            -v "$GITHUB_WORKSPACE:/src:ro" -w /src \
-            ubuntu:24.04 bash tests/test.sh
+            -v "$GITHUB_WORKSPACE:/src" -w /src \
+            ubuntu:24.04 bash -c '
+              apt-get update >/dev/null
+              apt-get install -y --no-install-recommends build-essential libseccomp-dev make >/dev/null
+              make BUILD_DIR=/tmp/bwrap-build build
+              BWRAP_SECCOMP_GEN=/tmp/bwrap-build/bwrap-seccomp-gen bash tests/arch-table-check.sh
+              bash tests/test.sh
+            '
 
   seccomp:
     runs-on: ubuntu-latest
@@ -54,6 +60,8 @@ jobs:
         run: |
           sudo sysctl -w kernel.unprivileged_userns_clone=1 || true
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+      - name: Verify architecture magic table
+        run: ./tests/arch-table-check.sh
       - name: Verify default seccomp filter
         run: |
           status=0
