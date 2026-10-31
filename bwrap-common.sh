@@ -290,6 +290,7 @@ _BWRAP_SECCOMP_FDS=()
 #   BWRAP_SECCOMP_DIR        precompiled filter dir (/usr/lib/bwrap-common/seccomp)
 #   BWRAP_SECCOMP_GEN        allowlist compiler (/usr/lib/bwrap-common/bwrap-seccomp-gen)
 #   BWRAP_SECCOMP_CACHE_DIR  compiled filter cache (~/.cache/bwrap-common/seccomp)
+#   BWRAP_SECCOMP_ARCH       override uname -m (cross-arch testing)
 bwrap_seccomp() {
     local _arrname="$1" _mode="$2"
     case "$_mode" in
@@ -299,7 +300,7 @@ bwrap_seccomp() {
         default)
             local _dir="${BWRAP_SECCOMP_DIR:-/usr/lib/bwrap-common/seccomp}"
             local _file
-            _file="${_dir}/default.$(uname -m).bpf"
+            _file="${_dir}/default.$(_bwrap_seccomp_arch).bpf"
             _bwrap_seccomp_use "$_arrname" "$_file"
             return $?
             ;;
@@ -314,6 +315,38 @@ bwrap_seccomp() {
 _bwrap_seccomp_fail() {
     echo "bwrap_seccomp: $1" >&2
     return 1
+}
+
+# Internal: native architecture for the default blob.
+_bwrap_seccomp_arch() {
+    printf '%s' "${BWRAP_SECCOMP_ARCH:-$(uname -m)}"
+}
+
+# Internal: expected AUDIT_ARCH bytes in the compiled BPF header, in the
+# target's native byte order.  Keep in sync with tools/seccomp-gen.c.
+_bwrap_seccomp_arch_magic() {
+    case "${1:-}" in
+        x86_64)               printf '%s' 3e0000c0 ;;
+        aarch64)              printf '%s' b70000c0 ;;
+        i386|i486|i586|i686)  printf '%s' 03000040 ;;
+        armv6l|armv7l|armv8l) printf '%s' 28000040 ;;
+        riscv64)              printf '%s' f30000c0 ;;
+        ppc64le)              printf '%s' 150000c0 ;;
+        ppc64)                printf '%s' 80000015 ;;
+        ppc)                  printf '%s' 00000014 ;;
+        s390x)                printf '%s' 80000016 ;;
+        s390)                 printf '%s' 00000016 ;;
+        loongarch64)          printf '%s' 020100c0 ;;
+        mips)                 printf '%s' 00000008 ;;
+        mipsel)               printf '%s' 08000040 ;;
+        mips64)               printf '%s' 80000008 ;;
+        mips64el)             printf '%s' 080000c0 ;;
+        mips64n32)            printf '%s' a0000008 ;;
+        mips64n32el)          printf '%s' 080000e0 ;;
+        parisc)               printf '%s' 0000000f ;;
+        parisc64)             printf '%s' 8000000f ;;
+        *)                    return 1 ;;
+    esac
 }
 
 # Internal: close filter descriptors inherited by bwrap.
@@ -389,24 +422,15 @@ _bwrap_seccomp_use() {
     fi
 
     local _arch _want _got
-    _arch=$(uname -m)
-    case "$_arch" in
-        x86_64)               _want="3e0000c0" ;;
-        aarch64)              _want="b70000c0" ;;
-        i386|i486|i586|i686)  _want="03000040" ;;
-        armv6l|armv7l|armv8l) _want="28000040" ;;
-        riscv64)              _want="f30000c0" ;;
-        ppc64le)              _want="150000c0" ;;
-        s390x)                _want="16000080" ;;
-        loongarch64)          _want="020100c0" ;;
-        *)                    _want="" ;;
-    esac
-    if [[ -n "$_want" ]]; then
-        _got=$(od -An -tx1 -j12 -N4 "$_file" 2>/dev/null | tr -d ' \n')
-        if [[ "$_got" != "$_want" ]]; then
-            _bwrap_seccomp_fail "filter arch mismatch (want $_want, got ${_got:-none}): $_file"
-            return 1
-        fi
+    _arch=$(_bwrap_seccomp_arch)
+    if ! _want=$(_bwrap_seccomp_arch_magic "$_arch"); then
+        _bwrap_seccomp_fail "unsupported architecture: $_arch"
+        return 1
+    fi
+    _got=$(od -An -tx1 -j12 -N4 "$_file" 2>/dev/null | tr -d ' \n')
+    if [[ "$_got" != "$_want" ]]; then
+        _bwrap_seccomp_fail "filter arch mismatch (want $_want, got ${_got:-none}): $_file"
+        return 1
     fi
 
     local _fd
@@ -439,8 +463,9 @@ _bwrap_seccomp_allowlist() {
     fi
 
     local _cache="${BWRAP_SECCOMP_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/bwrap-common/seccomp}"
-    local _hash
-    _hash=$(printf 'bwrap-common-seccomp-v2\n%s\n%s\n' "$(uname -m)" "$_spec" | sha256sum | cut -d' ' -f1)
+    local _hash _arch
+    _arch=$(_bwrap_seccomp_arch)
+    _hash=$(printf 'bwrap-common-seccomp-v2\n%s\n%s\n' "$_arch" "$_spec" | sha256sum | cut -d' ' -f1)
     if [[ -z "$_hash" ]]; then
         echo "bwrap_seccomp: failed to compute cache key" >&2
         return 1
@@ -660,6 +685,8 @@ bwrap_exec() {
         exec bwrap "$@"
     fi
 
+    _bwrap_install_cleanup
+
     local _bwrap_pid _rc=0
 
     bwrap "$@" <&0 &
@@ -670,16 +697,14 @@ bwrap_exec() {
     _bwrap_on_signal() {
         kill "$_bwrap_pid" 2>/dev/null || true
         wait "$_bwrap_pid" 2>/dev/null || true
-        _bwrap_cleanup
     }
     trap '_bwrap_on_signal; exit 143' TERM
     trap '_bwrap_on_signal; exit 130' INT
     trap '_bwrap_on_signal; exit 129' HUP
-    trap '' EXIT
 
     wait "$_bwrap_pid" || _rc=$?
 
-    _bwrap_cleanup
-
+    # Exit through _bwrap_exit_trap so cleanup and the caller's original
+    # EXIT trap both run, with the bwrap status preserved.
     exit "$_rc"
 }

@@ -89,17 +89,15 @@ trap 'rm -rf "$TMPDIR_TEST"' EXIT
 # ── seccomp fixtures ────────────────────────────────────────
 
 SECCOMP_ARCH=$(uname -m)
-case "$SECCOMP_ARCH" in
-    x86_64)               SECCOMP_MAGIC="3e0000c0" ;;
-    aarch64)              SECCOMP_MAGIC="b70000c0" ;;
-    i386|i486|i586|i686)  SECCOMP_MAGIC="03000040" ;;
-    armv6l|armv7l|armv8l) SECCOMP_MAGIC="28000040" ;;
-    riscv64)              SECCOMP_MAGIC="f30000c0" ;;
-    ppc64le)              SECCOMP_MAGIC="150000c0" ;;
-    s390x)                SECCOMP_MAGIC="16000080" ;;
-    loongarch64)          SECCOMP_MAGIC="020100c0" ;;
-    *)                    SECCOMP_MAGIC="00000000" ;;
-esac
+if ! SECCOMP_MAGIC=$(_bwrap_seccomp_arch_magic "$SECCOMP_ARCH"); then
+    # The library now rejects unknown architectures.  Keep the rest of the
+    # seccomp tests runnable on unsupported CI hosts by pinning the fixture to
+    # a known arch; the fail-closed path is covered explicitly below.
+    echo "  ! unsupported host arch '$SECCOMP_ARCH'; using x86_64 fixture"
+    SECCOMP_ARCH=x86_64
+    SECCOMP_MAGIC=$(_bwrap_seccomp_arch_magic x86_64)
+    export BWRAP_SECCOMP_ARCH=x86_64
+fi
 
 write_fake_blob() {
     local _file=$1 _magic=$2
@@ -595,6 +593,55 @@ SM_RC=$?
 
 unset BWRAP_SECCOMP_GEN FAKE_GEN_COUNTER FAKE_GEN_BLOB
 
+# ── seccomp architecture mapping ────────────────────────────
+
+section "seccomp architecture mapping"
+
+for pair in s390x:80000016 mips:00000008 mips64:80000008 \
+            mips64n32:a0000008 parisc:0000000f parisc64:8000000f \
+            ppc64:80000015 ppc64le:150000c0; do
+    arch=${pair%%:*}
+    want=${pair#*:}
+    got=$(_bwrap_seccomp_arch_magic "$arch" 2>/dev/null)
+    [[ "$got" == "$want" ]] && ok "arch $arch -> $want" || fail "arch $arch -> '${got:-none}', want $want"
+done
+if _bwrap_seccomp_arch_magic no-such-arch >/dev/null 2>&1; then
+    fail "unknown arch mapping is rejected"
+else
+    ok "unknown arch mapping is rejected"
+fi
+
+S390_DIR="${TMPDIR_TEST}/seccomp-s390x"
+mkdir -p "$S390_DIR"
+write_fake_blob "${S390_DIR}/default.s390x.bpf" "80000016"
+S390=()
+BWRAP_SECCOMP_ARCH=s390x BWRAP_SECCOMP_DIR="$S390_DIR" bwrap_seccomp S390 default
+S390_RC=$?
+if [[ $S390_RC -eq 0 && ${#S390[@]} -eq 2 && "${S390[0]}" == "--seccomp" ]]; then
+    ok "s390x big-endian fixture is accepted"
+else
+    fail "s390x fixture returned $S390_RC (${S390[*]})"
+fi
+_bwrap_seccomp_close_fds
+
+write_fake_blob "${S390_DIR}/default.s390x.bpf" "16000080"
+S390BAD=()
+BWRAP_SECCOMP_ARCH=s390x BWRAP_SECCOMP_DIR="$S390_DIR" bwrap_seccomp S390BAD default 2>/dev/null
+S390BAD_RC=$?
+[[ $S390BAD_RC -eq 1 && ${#S390BAD[@]} -eq 0 ]] \
+    && ok "s390x little-endian fixture is rejected" \
+    || fail "s390x wrong-endian fixture returned $S390BAD_RC"
+
+UNKNOWN_DIR="${TMPDIR_TEST}/seccomp-unknown"
+mkdir -p "$UNKNOWN_DIR"
+write_fake_blob "${UNKNOWN_DIR}/default.weird.bpf" "3e0000c0"
+SU=()
+BWRAP_SECCOMP_ARCH=weird BWRAP_SECCOMP_DIR="$UNKNOWN_DIR" bwrap_seccomp SU default 2>/dev/null
+SU_RC=$?
+[[ $SU_RC -eq 1 && ${#SU[@]} -eq 0 ]] \
+    && ok "unknown architecture fails closed" \
+    || fail "unknown architecture returned $SU_RC"
+
 # ── bwrap_ssh_agent ─────────────────────────────────────────
 
 section "bwrap_ssh_agent"
@@ -693,6 +740,7 @@ run_bwrap_exec() {
 
 run_bwrap_exec_proxy() {
     (
+        trap - EXIT
         export PATH="${FAKEBIN}:${PATH}"
         _BWRAP_DBUS_PROXY_PIDS=(999999)
         _BWRAP_DBUS_PROXY_SOCKETS=()
@@ -797,6 +845,31 @@ if [[ $RC6 -eq 7 ]] && [[ "$CLEANUP_COUNT6" -eq 1 ]]; then
     ok "proxy branch propagates non-zero exit status and runs cleanup exactly once"
 else
     fail "proxy branch propagates non-zero exit status and runs cleanup exactly once"
+fi
+
+# Test 7: Proxy branch preserves the caller's EXIT trap and exit status
+ARGS_FILE7="${TMPDIR_TEST}/args7"
+CLEANUP_FILE7="${TMPDIR_TEST}/cleanup7"
+TRAP_FILE7="${TMPDIR_TEST}/trap7"
+: > "$CLEANUP_FILE7"
+: > "$TRAP_FILE7"
+unset FAKE_BWRAP_ARGS_FILE FAKE_BWRAP_STDIN_FILE FAKE_BWRAP_EXIT FAKE_CLEANUP_FILE
+export FAKE_BWRAP_ARGS_FILE="$ARGS_FILE7"
+export FAKE_BWRAP_EXIT=7
+(
+    trap 'printf "caller:%s\n" "$?" >> "$TRAP_FILE7"' EXIT
+    export PATH="${FAKEBIN}:${PATH}"
+    _BWRAP_DBUS_PROXY_PIDS=(999999)
+    _BWRAP_DBUS_PROXY_SOCKETS=()
+    _bwrap_dbus_cleanup() { printf 'cleanup\n' >> "$CLEANUP_FILE7"; }
+    bwrap_exec --test < /dev/null
+)
+RC7=$?
+CLEANUP_COUNT7=$(grep -c '^cleanup$' "$CLEANUP_FILE7" 2>/dev/null || echo 0)
+if [[ $RC7 -eq 7 ]] && [[ "$CLEANUP_COUNT7" -eq 1 ]] && grep -qx 'caller:7' "$TRAP_FILE7"; then
+    ok "proxy branch preserves caller EXIT trap and status"
+else
+    fail "proxy branch preserves caller EXIT trap and status (rc=$RC7, cleanup=$CLEANUP_COUNT7, trap=$(cat "$TRAP_FILE7" 2>/dev/null))"
 fi
 
 # ── Summary ─────────────────────────────────────────────────

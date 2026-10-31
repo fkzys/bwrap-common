@@ -31,6 +31,17 @@ jobs:
       - uses: actions/checkout@v6
       - run: bash tests/test.sh
 
+  s390x-shell:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: docker/setup-qemu-action@v4
+      - name: Run shell tests on s390x
+        run: |
+          docker run --rm --platform linux/s390x \
+            -v "$GITHUB_WORKSPACE:/src:ro" -w /src \
+            ubuntu:24.04 bash tests/test.sh
+
   seccomp:
     runs-on: ubuntu-latest
     steps:

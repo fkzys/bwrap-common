@@ -189,7 +189,9 @@ keyring operations, `clone` with `CLONE_NEWUSER`, and a few more). See
 `bwrap_seccomp A default` applies
 `<BWRAP_SECCOMP_DIR>/default.$(uname -m).bpf`. A missing, malformed, or
 wrong-architecture blob fails closed: the function returns non-zero and adds
-no filter. Use `none` to disable seccomp explicitly.
+no filter. Architecture magic is checked in the target's native byte order
+(including big-endian s390x/mips/parisc); an unsupported `uname -m` also fails
+closed. Use `none` to disable seccomp explicitly.
 
 `bwrap_seccomp A "openat read write"` compiles a syscall **allowlist** and
 caches the result. Allowlist mode is fail-closed: an unknown syscall name, a
@@ -237,6 +239,7 @@ including high-bit `ioctl` aliases.
 | `BWRAP_SECCOMP_DIR` | `/usr/lib/bwrap-common/seccomp` |
 | `BWRAP_SECCOMP_GEN` | `/usr/lib/bwrap-common/bwrap-seccomp-gen` |
 | `BWRAP_SECCOMP_CACHE_DIR` | `${XDG_CACHE_HOME:-$HOME/.cache}/bwrap-common/seccomp` |
+| `BWRAP_SECCOMP_ARCH` | overrides `uname -m` for the default blob (cross-arch tests) |
 
 The allowlist cache key is
 `sha256("bwrap-common-seccomp-v2\n<arch>\n<spec>\n")`; cached files are mode
