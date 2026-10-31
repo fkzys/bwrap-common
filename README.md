@@ -90,12 +90,16 @@ bwrap_sandbox A yes
 bwrap_exec "${A[@]}" -- /usr/bin/app "$@"
 ```
 
-`bwrap_base` prepends `--clearenv`, so the sandbox does not inherit the host
-environment. Only variables set by `--setenv` options that follow it (including
-ones already in the array) reach the child. Inherited values such as `TERM` and
-`USER` are dropped; add explicit `--setenv` options for any the application
-needs. `DISPLAY` and `WAYLAND_DISPLAY` are re-added by the display helpers when
-the corresponding socket exists.
+`bwrap_base` prepends `--clearenv` by default, so the sandbox does not inherit
+the host environment. Only variables set by `--setenv` options that follow it
+(including ones already in the array) reach the child. Inherited values such as
+`TERM` and `USER` are dropped; add explicit `--setenv` options for any the
+application needs. `DISPLAY` and `WAYLAND_DISPLAY` are re-added by the display
+helpers when the corresponding socket exists.
+
+Pass `no` as `bwrap_base`'s third argument, or as `bwrap_gui_setup`'s fifth
+argument, to opt out and inherit the host environment. Opting out re-exposes
+secrets and loader/interpreter variables from the calling environment.
 
 ## Functions
 
@@ -103,7 +107,7 @@ the corresponding socket exists.
 
 | Function | Purpose |
 |---|---|
-| `bwrap_base` | Clears the inherited environment (`--clearenv`) and provides the system skeleton (`/usr`, `/etc`, `/proc`, `/sys`, `/dev`, `/tmp`); `$2` selects `shm=tmpfs` (default, private) or `shm=bind` (host `/dev/shm`) |
+| `bwrap_base` | Clears the inherited environment by default (`--clearenv`) and provides the system skeleton (`/usr`, `/etc`, `/proc`, `/sys`, `/dev`, `/tmp`); `$2` selects `shm=tmpfs` (default, private) or `shm=bind` (host `/dev/shm`); `$3` selects `clearenv=yes` (default) or `no` |
 | `bwrap_lib64` | `/usr/lib64` bind or symlink |
 | `bwrap_resolv` | resolv.conf symlink target for DNS |
 | `bwrap_gpu` | DRI + NVIDIA device nodes |
@@ -134,7 +138,7 @@ the corresponding socket exists.
 
 | Function | Purpose |
 |---|---|
-| `bwrap_gui_setup` | `bwrap_base` + `lib64` + optional `gpu` + optional `resolv` + `runtime_dir` + `home_tmpfs`; optional `shm` mode |
+| `bwrap_gui_setup` | `bwrap_base` + `lib64` + optional `gpu` + optional `resolv` + `runtime_dir` + `home_tmpfs`; optional `shm` and `clearenv` modes |
 | `bwrap_gui_finish` | `themes` + `wayland`/`x11` + D-Bus (`filtered` by default; `unfiltered`/`none` opt-out) + `env_base` + malloc + seccomp + `sandbox` |
 
 `bwrap_gui_setup` parameters:
@@ -143,6 +147,7 @@ the corresponding socket exists.
 - `$2` — network: `yes`/`no` (default `no`); `yes` adds the resolv.conf bind
 - `$3` — GPU: `yes`/`no` (default `no`); `yes` exposes the DRI/NVIDIA device nodes, `no` omits them. GPU exposure expands the attack surface, so it is opt-in.
 - `$4` — shm: `tmpfs` (default) or `bind`. `tmpfs` creates a private, empty `/dev/shm`; `bind` exposes the host `/dev/shm`, which shares POSIX shared memory with host processes and other sandboxes. Use `bind` only for applications that require host shm.
+- `$5` — clearenv: `yes` (default) or `no`. `yes` drops the inherited environment; `no` keeps it and re-exposes host secrets and loader/interpreter variables.
 
 ### D-Bus filtering
 

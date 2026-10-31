@@ -30,18 +30,31 @@ _bwrap_shm_valid() {
     esac
 }
 
+_bwrap_clearenv_valid() {
+    case "${1:-}" in
+        yes|no) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 # ── Common base bwrap args ────────────────────────────────────
 # $2 = shm mode: "tmpfs" (default, private) or "bind" (host /dev/shm)
-# Clears inherited environment first so only explicit --setenv entries survive.
+# $3 = clear environment: "yes" (default) or "no"
+# Default clears inherited environment so only explicit --setenv entries survive.
 bwrap_base() {
     local -n _arr=$1
     local _shm="${2:-tmpfs}"
+    local _clearenv="${3:-yes}"
     if ! _bwrap_shm_valid "$_shm"; then
         echo "bwrap_base: invalid shm mode '$_shm' (expected tmpfs or bind)" >&2
         return 2
     fi
+    if ! _bwrap_clearenv_valid "$_clearenv"; then
+        echo "bwrap_base: invalid clearenv mode '$_clearenv' (expected yes or no)" >&2
+        return 2
+    fi
     # Prepend: any --setenv already present in the array must run after this.
-    _arr=(--clearenv "${_arr[@]}")
+    [[ "$_clearenv" == "yes" ]] && _arr=(--clearenv "${_arr[@]}")
     _arr+=(
         --ro-bind /usr /usr
         --symlink /usr/bin /bin
@@ -546,13 +559,18 @@ bwrap_ssh_agent() {
 # $2 = network: "yes" or "no"
 # $3 = GPU: "yes" or "no"
 # $4 = shm mode: "tmpfs" (default, private) or "bind" (host /dev/shm)
+# $5 = clear environment: "yes" (default) or "no"
 bwrap_gui_setup() {
-    local _v=$1 _net="${2:-no}" _gpu="${3:-no}" _shm="${4:-tmpfs}"
+    local _v=$1 _net="${2:-no}" _gpu="${3:-no}" _shm="${4:-tmpfs}" _clearenv="${5:-yes}"
     if ! _bwrap_shm_valid "$_shm"; then
         echo "bwrap_gui_setup: invalid shm mode '$_shm' (expected tmpfs or bind)" >&2
         return 2
     fi
-    bwrap_base "$_v" "$_shm" || return
+    if ! _bwrap_clearenv_valid "$_clearenv"; then
+        echo "bwrap_gui_setup: invalid clearenv mode '$_clearenv' (expected yes or no)" >&2
+        return 2
+    fi
+    bwrap_base "$_v" "$_shm" "$_clearenv" || return
     bwrap_lib64 "$_v"
     [[ "$_gpu" == "yes" ]] && bwrap_gpu "$_v"
     [[ "$_net" == "yes" ]] && bwrap_resolv "$_v"

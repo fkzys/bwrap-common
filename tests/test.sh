@@ -207,6 +207,22 @@ PRESET+=(--setenv KEEP value)
 bwrap_base PRESET
 has_sequence PRESET "--clearenv" "--setenv" "KEEP" && ok "existing --setenv is kept after --clearenv" || fail "existing --setenv was cleared"
 
+NO_CLEAR=()
+bwrap_base NO_CLEAR tmpfs no
+has_arg NO_CLEAR "--clearenv" && fail "clearenv=no still adds --clearenv" || ok "clearenv=no omits --clearenv"
+has_pair NO_CLEAR "--ro-bind" "/usr" && ok "clearenv=no keeps base mounts" || fail "clearenv=no lost base mounts"
+
+CLEAR_INVALID=()
+CLEAR_INVALID_ERR="${TMPDIR_TEST}/clearenv-invalid.err"
+bwrap_base CLEAR_INVALID tmpfs invalid 2>"$CLEAR_INVALID_ERR"
+CLEAR_INVALID_RC=$?
+CLEAR_INVALID_MSG="bwrap_base: invalid clearenv mode 'invalid' (expected yes or no)"
+if [[ $CLEAR_INVALID_RC -eq 2 ]] && grep -qxF "$CLEAR_INVALID_MSG" "$CLEAR_INVALID_ERR"; then
+    ok "invalid clearenv mode is rejected by bwrap_base with its own message"
+else
+    fail "invalid bwrap_base clearenv mode (rc=$CLEAR_INVALID_RC, stderr=$(cat "$CLEAR_INVALID_ERR" 2>/dev/null))"
+fi
+
 SHM_BIND=()
 bwrap_base SHM_BIND bind
 has_sequence SHM_BIND "--bind" "/dev/shm" "/dev/shm" && ok "shm=bind has exact source and target path" || fail "shm=bind source/target mismatch"
@@ -371,9 +387,25 @@ section "bwrap_gui_setup"
 P=()
 bwrap_gui_setup P no
 [[ ${#P[@]} -gt 0 ]]         && ok "produces non-empty array"       || fail "empty array"
+[[ "${P[0]}" == "--clearenv" ]] && ok "default gui setup clears env" || fail "default gui setup did not clear env"
 has_pair P "--ro-bind" "/usr" && ok "includes base --ro-bind /usr"   || fail "base --ro-bind /usr missing"
 has_pair P "--tmpfs" "$HOME"  && ok "includes home tmpfs"            || fail "home tmpfs missing"
 has_pair P "--tmpfs" "/dev/shm" && ok "default gui setup uses private shm" || fail "default gui setup shm missing"
+
+SETUP_NO_CLEAR=()
+bwrap_gui_setup SETUP_NO_CLEAR no no tmpfs no
+has_arg SETUP_NO_CLEAR "--clearenv" && fail "gui clearenv=no still adds --clearenv" || ok "gui clearenv=no omits --clearenv"
+
+SETUP_CLEAR_INVALID=()
+SETUP_CLEAR_INVALID_ERR="${TMPDIR_TEST}/setup-clearenv-invalid.err"
+bwrap_gui_setup SETUP_CLEAR_INVALID no no tmpfs invalid 2>"$SETUP_CLEAR_INVALID_ERR"
+SETUP_CLEAR_INVALID_RC=$?
+SETUP_CLEAR_INVALID_MSG="bwrap_gui_setup: invalid clearenv mode 'invalid' (expected yes or no)"
+if [[ $SETUP_CLEAR_INVALID_RC -eq 2 ]] && grep -qxF "$SETUP_CLEAR_INVALID_MSG" "$SETUP_CLEAR_INVALID_ERR"; then
+    ok "gui setup rejects invalid clearenv mode with its own message"
+else
+    fail "invalid bwrap_gui_setup clearenv mode (rc=$SETUP_CLEAR_INVALID_RC, stderr=$(cat "$SETUP_CLEAR_INVALID_ERR" 2>/dev/null))"
+fi
 
 SETUP_SHM_BIND=()
 bwrap_gui_setup SETUP_SHM_BIND no no bind
