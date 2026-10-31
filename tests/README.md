@@ -135,7 +135,7 @@ headers, `cc`, and `make`.
 `bwrap_exec` replaces the shell (`exec bwrap ...`) when no filtered D-Bus proxy is running, and otherwise runs bwrap as a background child while forwarding signals and cleaning up the proxies. Both branches are tested through a fake `bwrap` executable written to `$TMPDIR_TEST/fakebin` and prepended to `PATH` for the duration of each call. The fake captures its arguments NUL-delimited (so empty-string arguments survive), optionally copies stdin to a file, and exits with a configurable status. Every call runs in a subshell, so `exec`/`exit` cannot terminate the test runner.
 
 - **exec branch**: arguments are forwarded verbatim (spaces and empty strings included), exit status is propagated, stdin from fd 0 is inherited, and `_bwrap_dbus_cleanup` is not invoked (proves the fast path is taken)
-- **proxy branch**: arguments and exit status are still forwarded/propagated, `_bwrap_dbus_cleanup` runs exactly once even on failure, stdin is inherited, and the caller's original `EXIT` trap still runs with the preserved status
+- **proxy branch**: arguments and exit status are still forwarded/propagated, `_bwrap_dbus_cleanup` runs exactly once even on failure, stdin is inherited, and the caller's original `EXIT` trap runs after proxy cleanup with the preserved status
 - **stdin regression (commit d308327)**: the proxy branch must pass piped stdin to bwrap. Before the fix, `bwrap "$@" &` ran without job control, so bash redirected the child's stdin to `/dev/null`; the test fails if the line loses the explicit `<&0`
 
 ## CI

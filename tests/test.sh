@@ -738,6 +738,9 @@ run_bwrap_exec() {
 
 run_bwrap_exec_proxy() {
     (
+        # Most proxy tests only inspect args/stdin/status. Clear the harness
+        # EXIT trap here; Test 7 calls bwrap_exec directly to verify that a
+        # caller trap and proxy cleanup coexist.
         trap - EXIT
         export PATH="${FAKEBIN}:${PATH}"
         _BWRAP_DBUS_PROXY_PIDS=(999999)
@@ -845,29 +848,29 @@ else
     fail "proxy branch propagates non-zero exit status and runs cleanup exactly once"
 fi
 
-# Test 7: Proxy branch preserves the caller's EXIT trap and exit status
+# Test 7: Proxy branch: cleanup runs first, then the caller's EXIT trap,
+# with the original bwrap exit status preserved.
 ARGS_FILE7="${TMPDIR_TEST}/args7"
-CLEANUP_FILE7="${TMPDIR_TEST}/cleanup7"
-TRAP_FILE7="${TMPDIR_TEST}/trap7"
-: > "$CLEANUP_FILE7"
-: > "$TRAP_FILE7"
+ORDER_FILE7="${TMPDIR_TEST}/order7"
+: > "$ORDER_FILE7"
 unset FAKE_BWRAP_ARGS_FILE FAKE_BWRAP_STDIN_FILE FAKE_BWRAP_EXIT FAKE_CLEANUP_FILE
 export FAKE_BWRAP_ARGS_FILE="$ARGS_FILE7"
 export FAKE_BWRAP_EXIT=7
 (
-    trap 'printf "caller:%s\n" "$?" >> "$TRAP_FILE7"' EXIT
+    trap 'printf "caller:%s\n" "$?" >> "$ORDER_FILE7"' EXIT
     export PATH="${FAKEBIN}:${PATH}"
     _BWRAP_DBUS_PROXY_PIDS=(999999)
     _BWRAP_DBUS_PROXY_SOCKETS=()
-    _bwrap_dbus_cleanup() { printf 'cleanup\n' >> "$CLEANUP_FILE7"; }
+    _bwrap_dbus_cleanup() { printf 'cleanup\n' >> "$ORDER_FILE7"; }
     bwrap_exec --test < /dev/null
 )
 RC7=$?
-CLEANUP_COUNT7=$(grep -c '^cleanup$' "$CLEANUP_FILE7" 2>/dev/null || echo 0)
-if [[ $RC7 -eq 7 ]] && [[ "$CLEANUP_COUNT7" -eq 1 ]] && grep -qx 'caller:7' "$TRAP_FILE7"; then
-    ok "proxy branch preserves caller EXIT trap and status"
+GOT_ORDER7=$(cat "$ORDER_FILE7" 2>/dev/null)
+EXPECTED_ORDER7=$'cleanup\ncaller:7'
+if [[ $RC7 -eq 7 && "$GOT_ORDER7" == "$EXPECTED_ORDER7" ]]; then
+    ok "proxy branch runs cleanup then caller EXIT trap, preserving status"
 else
-    fail "proxy branch preserves caller EXIT trap and status (rc=$RC7, cleanup=$CLEANUP_COUNT7, trap=$(cat "$TRAP_FILE7" 2>/dev/null))"
+    fail "proxy branch EXIT order/status (rc=$RC7, got='$GOT_ORDER7', want='$EXPECTED_ORDER7')"
 fi
 
 # ── Summary ─────────────────────────────────────────────────
