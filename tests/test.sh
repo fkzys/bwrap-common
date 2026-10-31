@@ -75,18 +75,6 @@ has_sequence() {
     return 1
 }
 
-index_of_pair() {
-    local -n _arr=$1; local flag=$2 val=$3
-    local i
-    for ((i=0; i<${#_arr[@]}-1; i++)); do
-        if [[ "${_arr[$i]}" == "$flag" && "${_arr[$((i+1))]}" == "$val" ]]; then
-            printf '%s\n' "$i"
-            return 0
-        fi
-    done
-    return 1
-}
-
 count_flag() {
     local -n _arr=$1; local flag=$2; local count=0
     for arg in "${_arr[@]}"; do [[ "$arg" == "$flag" ]] && count=$((count + 1)); done
@@ -188,16 +176,9 @@ has_pair A "--bind" "/dev/shm"   && fail "default shm binds host /dev/shm" || ok
 
 SHM_BIND=()
 bwrap_base SHM_BIND bind
-has_sequence SHM_BIND "--bind" "/dev/shm" "/dev/shm" && ok "shm=bind has exact host bind sequence" || fail "shm=bind host bind sequence missing"
+has_sequence SHM_BIND "--bind" "/dev/shm" "/dev/shm" "--ro-bind" "/etc" "/etc" && ok "shm=bind mount is immediately before --ro-bind /etc" || fail "shm=bind ordering sequence missing"
 has_pair SHM_BIND "--tmpfs" "/dev/shm" && fail "shm=bind unexpectedly adds tmpfs" || ok "shm=bind does not add tmpfs"
 has_pair SHM_BIND "--perms" "1777" && fail "shm=bind unexpectedly adds perms" || ok "shm=bind does not add perms"
-BIND_POS=$(index_of_pair SHM_BIND "--bind" "/dev/shm")
-ETC_POS=$(index_of_pair SHM_BIND "--ro-bind" "/etc")
-if [[ -n "$BIND_POS" && -n "$ETC_POS" && "$BIND_POS" -lt "$ETC_POS" ]]; then
-    ok "shm=bind mount precedes --ro-bind /etc"
-else
-    fail "shm=bind ordering (bind=$BIND_POS, etc=$ETC_POS)"
-fi
 
 SHM_TMPFS=()
 bwrap_base SHM_TMPFS tmpfs
@@ -208,10 +189,14 @@ else
 fi
 
 SHM_INVALID=()
-if bwrap_base SHM_INVALID invalid 2>/dev/null; then
-    fail "invalid shm mode was accepted"
+SHM_INVALID_ERR="${TMPDIR_TEST}/shm-invalid.err"
+bwrap_base SHM_INVALID invalid 2>"$SHM_INVALID_ERR"
+SHM_INVALID_RC=$?
+SHM_INVALID_MSG="bwrap_base: invalid shm mode 'invalid' (expected tmpfs or bind)"
+if [[ $SHM_INVALID_RC -eq 2 ]] && grep -qxF "$SHM_INVALID_MSG" "$SHM_INVALID_ERR"; then
+    ok "invalid shm mode is rejected by bwrap_base with its own message"
 else
-    ok "invalid shm mode is rejected"
+    fail "invalid bwrap_base shm mode (rc=$SHM_INVALID_RC, stderr=$(cat "$SHM_INVALID_ERR" 2>/dev/null))"
 fi
 
 # ── bwrap_home_tmpfs ────────────────────────────────────────
@@ -362,10 +347,14 @@ has_sequence SETUP_SHM_BIND "--bind" "/dev/shm" "/dev/shm" && ok "gui setup forw
 has_pair SETUP_SHM_BIND "--tmpfs" "/dev/shm" && fail "gui setup shm=bind added tmpfs" || ok "gui setup shm=bind omits tmpfs"
 
 SETUP_SHM_INVALID=()
-if bwrap_gui_setup SETUP_SHM_INVALID no no invalid 2>/dev/null; then
-    fail "gui setup accepted invalid shm mode"
+SETUP_SHM_INVALID_ERR="${TMPDIR_TEST}/setup-shm-invalid.err"
+bwrap_gui_setup SETUP_SHM_INVALID no no invalid 2>"$SETUP_SHM_INVALID_ERR"
+SETUP_SHM_INVALID_RC=$?
+SETUP_SHM_INVALID_MSG="bwrap_gui_setup: invalid shm mode 'invalid' (expected tmpfs or bind)"
+if [[ $SETUP_SHM_INVALID_RC -eq 2 ]] && grep -qxF "$SETUP_SHM_INVALID_MSG" "$SETUP_SHM_INVALID_ERR"; then
+    ok "gui setup rejects invalid shm mode with its own message"
 else
-    ok "gui setup rejects invalid shm mode"
+    fail "invalid bwrap_gui_setup shm mode (rc=$SETUP_SHM_INVALID_RC, stderr=$(cat "$SETUP_SHM_INVALID_ERR" 2>/dev/null))"
 fi
 
 Q=()

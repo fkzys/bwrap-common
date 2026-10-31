@@ -31,9 +31,7 @@ bwrap_base() {
     case "$_shm" in
         tmpfs|bind) ;;
         *)
-            local _who="bwrap_base"
-            [[ "${FUNCNAME[1]:-}" == "bwrap_gui_setup" ]] && _who="${FUNCNAME[1]}"
-            echo "$_who: invalid shm mode '$_shm' (expected tmpfs or bind)" >&2
+            echo "bwrap_base: invalid shm mode '$_shm' (expected tmpfs or bind)" >&2
             return 2
             ;;
     esac
@@ -543,6 +541,13 @@ bwrap_ssh_agent() {
 # $4 = shm mode: "tmpfs" (default, private) or "bind" (host /dev/shm)
 bwrap_gui_setup() {
     local _v=$1 _net="${2:-no}" _gpu="${3:-no}" _shm="${4:-tmpfs}"
+    case "$_shm" in
+        tmpfs|bind) ;;
+        *)
+            echo "bwrap_gui_setup: invalid shm mode '$_shm' (expected tmpfs or bind)" >&2
+            return 2
+            ;;
+    esac
     bwrap_base "$_v" "$_shm" || return
     bwrap_lib64 "$_v"
     [[ "$_gpu" == "yes" ]] && bwrap_gpu "$_v"
