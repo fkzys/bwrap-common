@@ -32,6 +32,7 @@ _bwrap_shm_valid() {
 
 # ── Common base bwrap args ────────────────────────────────────
 # $2 = shm mode: "tmpfs" (default, private) or "bind" (host /dev/shm)
+# Clears inherited environment first so only explicit --setenv entries survive.
 bwrap_base() {
     local -n _arr=$1
     local _shm="${2:-tmpfs}"
@@ -39,6 +40,8 @@ bwrap_base() {
         echo "bwrap_base: invalid shm mode '$_shm' (expected tmpfs or bind)" >&2
         return 2
     fi
+    # Prepend: any --setenv already present in the array must run after this.
+    _arr=(--clearenv "${_arr[@]}")
     _arr+=(
         --ro-bind /usr /usr
         --symlink /usr/bin /bin

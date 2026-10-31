@@ -90,13 +90,20 @@ bwrap_sandbox A yes
 bwrap_exec "${A[@]}" -- /usr/bin/app "$@"
 ```
 
+`bwrap_base` prepends `--clearenv`, so the sandbox does not inherit the host
+environment. Only variables set by `--setenv` options that follow it (including
+ones already in the array) reach the child. Inherited values such as `TERM` and
+`USER` are dropped; add explicit `--setenv` options for any the application
+needs. `DISPLAY` and `WAYLAND_DISPLAY` are re-added by the display helpers when
+the corresponding socket exists.
+
 ## Functions
 
 ### Low-level helpers
 
 | Function | Purpose |
 |---|---|
-| `bwrap_base` | System skeleton (`/usr`, `/etc`, `/proc`, `/sys`, `/dev`, `/tmp`); `$2` selects `shm=tmpfs` (default, private) or `shm=bind` (host `/dev/shm`) |
+| `bwrap_base` | Clears the inherited environment (`--clearenv`) and provides the system skeleton (`/usr`, `/etc`, `/proc`, `/sys`, `/dev`, `/tmp`); `$2` selects `shm=tmpfs` (default, private) or `shm=bind` (host `/dev/shm`) |
 | `bwrap_lib64` | `/usr/lib64` bind or symlink |
 | `bwrap_resolv` | resolv.conf symlink target for DNS |
 | `bwrap_gpu` | DRI + NVIDIA device nodes |

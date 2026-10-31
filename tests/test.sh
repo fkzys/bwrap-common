@@ -195,11 +195,17 @@ section "bwrap_base"
 A=()
 bwrap_base A
 [[ ${#A[@]} -gt 0 ]]            && ok "produces non-empty array"       || fail "empty array"
+[[ "${A[0]}" == "--clearenv" ]] && ok "--clearenv is the first argument" || fail "--clearenv is not first"
 has_pair A "--ro-bind" "/usr"    && ok "--ro-bind /usr present"         || fail "--ro-bind /usr missing"
 has_pair A "--proc" "/proc"      && ok "--proc /proc present"           || fail "--proc /proc missing"
 has_pair A "--tmpfs" "/tmp"      && ok "--tmpfs /tmp present"           || fail "--tmpfs /tmp missing"
 has_sequence A "--perms" "1777" "--tmpfs" "/dev/shm" && ok "default shm uses adjacent private tmpfs perms 1777" || fail "default shm tmpfs sequence missing"
 has_pair A "--bind" "/dev/shm"   && fail "default shm binds host /dev/shm" || ok "default shm does not bind host /dev/shm"
+
+PRESET=()
+PRESET+=(--setenv KEEP value)
+bwrap_base PRESET
+has_sequence PRESET "--clearenv" "--setenv" "KEEP" && ok "existing --setenv is kept after --clearenv" || fail "existing --setenv was cleared"
 
 SHM_BIND=()
 bwrap_base SHM_BIND bind
@@ -496,6 +502,12 @@ R=()
 bwrap_gui_finish R wayland no default unfiltered
 [[ ${#R[@]} -gt 0 ]]      && ok "produces non-empty array"   || fail "empty array"
 has_arg R "--unshare-all"  && ok "--unshare-all present"      || fail "--unshare-all missing"
+
+CLEAR_GUI=()
+bwrap_base CLEAR_GUI
+bwrap_gui_finish CLEAR_GUI wayland no default unfiltered no none
+[[ "${CLEAR_GUI[0]}" == "--clearenv" ]] && ok "--clearenv survives gui_finish prepend" || fail "--clearenv is not first after gui_finish"
+has_pair CLEAR_GUI "--setenv" "HOME" && ok "explicit HOME survives --clearenv" || fail "HOME setenv missing after --clearenv"
 
 S=()
 bwrap_gui_finish S wayland no no none
