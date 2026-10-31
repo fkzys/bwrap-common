@@ -4,14 +4,27 @@ pkgname = bwrap-common
 CC ?= cc
 CFLAGS ?= -O2 -Wall -Wextra
 ARCH ?= $(shell uname -m)
+BUILD_USER ?= $(SUDO_USER)
 
 BUILD_DIR = build
 SECCOMP_GEN = $(BUILD_DIR)/bwrap-seccomp-gen
 SECCOMP_BPF = $(BUILD_DIR)/seccomp/default.$(ARCH).bpf
 
-.PHONY: build install uninstall reinstall test clean
+.PHONY: build _build install uninstall reinstall test clean
 
-build: $(SECCOMP_GEN) $(SECCOMP_BPF)
+ifeq ($(shell id -u),0)
+build:
+	@if [ -z "$(BUILD_USER)" ] || [ "$(BUILD_USER)" = root ]; then \
+		echo "build: refusing to build as root; run make as a user or set BUILD_USER=<user>" >&2; \
+		exit 1; \
+	fi
+	@sudo -u "$(BUILD_USER)" $(MAKE) --no-print-directory -C "$(CURDIR)" \
+		_build ARCH="$(ARCH)" CC="$(CC)" CFLAGS="$(CFLAGS)" BUILD_DIR="$(BUILD_DIR)"
+else
+build: _build
+endif
+
+_build: $(SECCOMP_GEN) $(SECCOMP_BPF)
 
 $(SECCOMP_GEN): tools/seccomp-gen.c
 	@mkdir -p $(dir $@)
