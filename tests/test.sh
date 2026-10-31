@@ -538,13 +538,13 @@ fi
 section "bwrap_gui_finish"
 
 R=()
-bwrap_gui_finish R wayland no default unfiltered
+bwrap_gui_finish R wayland no no unfiltered
 [[ ${#R[@]} -gt 0 ]]      && ok "produces non-empty array"   || fail "empty array"
 has_arg R "--unshare-all"  && ok "--unshare-all present"      || fail "--unshare-all missing"
 
 CLEAR_GUI=()
 bwrap_base CLEAR_GUI
-bwrap_gui_finish CLEAR_GUI wayland no default unfiltered no none
+bwrap_gui_finish CLEAR_GUI wayland no no unfiltered no none
 [[ "${CLEAR_GUI[0]}" == "--clearenv" ]] && ok "--clearenv survives gui_finish prepend" || fail "--clearenv is not first after gui_finish"
 has_pair CLEAR_GUI "--setenv" "HOME" && ok "explicit HOME survives --clearenv" || fail "HOME setenv missing after --clearenv"
 
@@ -557,36 +557,82 @@ else
     ok "malloc=no stub bind skipped (libhardened_malloc.so.empty not installed)"
 fi
 
+# ── bwrap_hardened_malloc ──────────────────────────────────
+
+section "bwrap_hardened_malloc"
+
+HM_DEFAULT=()
+HM_DEFAULT_ERR="${TMPDIR_TEST}/hardened-malloc-default.err"
+bwrap_hardened_malloc HM_DEFAULT 2>"$HM_DEFAULT_ERR"
+HM_DEFAULT_RC=$?
+if [[ -f /usr/lib/libhardened_malloc.so ]]; then
+    [[ $HM_DEFAULT_RC -eq 0 ]] && ok "omitted variant defaults to default" || fail "omitted variant returned $HM_DEFAULT_RC"
+    has_sequence HM_DEFAULT "--setenv" "LD_PRELOAD" "/usr/lib/libhardened_malloc.so" \
+        && ok "omitted variant uses the default library" || fail "omitted variant missing default LD_PRELOAD"
+else
+    [[ $HM_DEFAULT_RC -eq 1 ]] && ok "missing omitted variant fails" || fail "missing omitted variant returned $HM_DEFAULT_RC"
+    grep -qF "hardened_malloc library not found" "$HM_DEFAULT_ERR" \
+        && ok "missing omitted variant reports the default library" || fail "missing omitted variant error is unclear"
+fi
+
+HM_LIGHT=()
+HM_LIGHT_ERR="${TMPDIR_TEST}/hardened-malloc-light.err"
+bwrap_hardened_malloc HM_LIGHT light 2>"$HM_LIGHT_ERR"
+HM_LIGHT_RC=$?
+if [[ -f /usr/lib/libhardened_malloc-light.so ]]; then
+    [[ $HM_LIGHT_RC -eq 0 ]] && ok "light variant succeeds" || fail "light variant returned $HM_LIGHT_RC"
+    has_sequence HM_LIGHT "--setenv" "LD_PRELOAD" "/usr/lib/libhardened_malloc-light.so" \
+        && ok "light variant sets LD_PRELOAD" || fail "light variant missing LD_PRELOAD"
+else
+    [[ $HM_LIGHT_RC -eq 1 ]] && ok "missing light variant fails" || fail "missing light variant returned $HM_LIGHT_RC"
+    grep -qF "hardened_malloc library not found" "$HM_LIGHT_ERR" \
+        && ok "missing light variant reports the library" || fail "missing light variant error is unclear"
+fi
+
+HMG=()
+HMG_ERR="${TMPDIR_TEST}/gui-finish-hardened-malloc.err"
+bwrap_gui_finish HMG wayland no default unfiltered no none 2>"$HMG_ERR"
+HMG_RC=$?
+if [[ -f /usr/lib/libhardened_malloc.so ]]; then
+    [[ $HMG_RC -eq 0 ]] && ok "gui_finish default enables hardened_malloc" || fail "gui_finish default returned $HMG_RC"
+    has_sequence HMG "--setenv" "LD_PRELOAD" "/usr/lib/libhardened_malloc.so" \
+        && ok "gui_finish default sets LD_PRELOAD" || fail "gui_finish default missing LD_PRELOAD"
+else
+    [[ $HMG_RC -eq 1 ]] && ok "gui_finish default fails when hardened_malloc is missing" || fail "gui_finish default returned $HMG_RC"
+    grep -qF "hardened_malloc library not found" "$HMG_ERR" \
+        && ok "gui_finish default reports the missing library" || fail "gui_finish default error is unclear"
+fi
+
 # ── bwrap_gui_finish (seccomp) ──────────────────────────────
 
 section "bwrap_gui_finish (seccomp)"
 
 SN=()
-bwrap_gui_finish SN wayland no default unfiltered no default
+bwrap_gui_finish SN wayland no no unfiltered no default
 SN_RC=$?
 [[ $SN_RC -eq 0 ]] && ok "seccomp=default returns 0" || fail "seccomp=default returned $SN_RC"
 has_arg SN "--seccomp" && ok "seccomp=default appends --seccomp" || fail "seccomp=default missing --seccomp"
 
 SO=()
-bwrap_gui_finish SO wayland no default unfiltered no none
+bwrap_gui_finish SO wayland no no unfiltered no none
 SO_RC=$?
 [[ $SO_RC -eq 0 ]] && ok "seccomp=none returns 0" || fail "seccomp=none returned $SO_RC"
 has_arg SO "--seccomp" && fail "seccomp=none appended --seccomp" || ok "seccomp=none appends nothing"
 
 SP=()
-bwrap_gui_finish SP wayland no default unfiltered no "openat" 2>/dev/null
+bwrap_gui_finish SP wayland no no unfiltered no "openat" 2>/dev/null
 SP_RC=$?
 [[ $SP_RC -eq 1 ]] && ok "allowlist via gui_finish is rejected" || fail "allowlist via gui_finish returned $SP_RC"
 has_arg SP "--seccomp" && fail "rejected allowlist appended --seccomp" || ok "rejected allowlist appends nothing"
 
 SNM=()
-BWRAP_SECCOMP_DIR="${TMPDIR_TEST}/missing" bwrap_gui_finish SNM wayland no default unfiltered no default 2>/dev/null
+BWRAP_SECCOMP_DIR="${TMPDIR_TEST}/missing" bwrap_gui_finish SNM wayland no no unfiltered no default 2>/dev/null
 SNM_RC=$?
 [[ $SNM_RC -eq 1 ]] && ok "seccomp=default fails when the blob is missing" || fail "missing seccomp blob returned $SNM_RC"
 has_arg SNM "--seccomp" && fail "failed seccomp setup appended --seccomp" || ok "failed seccomp setup appends nothing"
 
 SOM=()
-BWRAP_SECCOMP_DIR="${TMPDIR_TEST}/missing" bwrap_gui_finish SOM wayland no default unfiltered no none 2>/dev/null
+BWRAP_SECCOMP_DIR="${TMPDIR_TEST}/missing" bwrap_gui_finish SOM wayland no no unfiltered no none 2>/dev/null
 SOM_RC=$?
 [[ $SOM_RC -eq 0 ]] && ok "seccomp=none ignores a missing blob" || fail "seccomp=none returned $SOM_RC"
 has_arg SOM "--seccomp" && fail "seccomp=none appended --seccomp" || ok "seccomp=none appends nothing when the blob is missing"
@@ -814,27 +860,27 @@ DC_RC=$?
 [[ $DC_RC -eq 1 && ${#DC[@]} -eq 0 ]] && ok "bwrap_dbus_common propagates the missing proxy error" || fail "bwrap_dbus_common returned $DC_RC"
 
 DGF=()
-PATH="$EMPTY_PATH" DBUS_SESSION_BUS_ADDRESS="$NO_PROXY_ADDR" bwrap_gui_finish DGF wayland no default filtered no none 2>/dev/null
+PATH="$EMPTY_PATH" DBUS_SESSION_BUS_ADDRESS="$NO_PROXY_ADDR" bwrap_gui_finish DGF wayland no no filtered no none 2>/dev/null
 DGF_RC=$?
 [[ $DGF_RC -eq 1 ]] && ok "dbus=filtered fails when the proxy is missing" || fail "dbus=filtered returned $DGF_RC"
 has_arg DGF "${XDG_RUNTIME_DIR}/bus" && fail "failed dbus=filtered bound the bus socket" || ok "failed dbus=filtered appends no bus bind"
 has_arg DGF "DBUS_SESSION_BUS_ADDRESS" && fail "failed dbus=filtered set the bus address" || ok "failed dbus=filtered appends no bus env"
 
 DGD=()
-PATH="$EMPTY_PATH" DBUS_SESSION_BUS_ADDRESS="$NO_PROXY_ADDR" bwrap_gui_finish DGD wayland no default 2>/dev/null
+PATH="$EMPTY_PATH" DBUS_SESSION_BUS_ADDRESS="$NO_PROXY_ADDR" bwrap_gui_finish DGD wayland no no 2>/dev/null
 DGD_RC=$?
 [[ $DGD_RC -eq 1 ]] && ok "dbus defaults to filtered when the mode is omitted" || fail "default dbus mode returned $DGD_RC"
 has_arg DGD "${XDG_RUNTIME_DIR}/bus" && fail "default dbus mode bound the bus socket" || ok "default dbus mode appends no bus bind"
 has_arg DGD "DBUS_SESSION_BUS_ADDRESS" && fail "default dbus mode set the bus address" || ok "default dbus mode appends no bus env"
 
 DGN=()
-PATH="$EMPTY_PATH" DBUS_SESSION_BUS_ADDRESS="$NO_PROXY_ADDR" bwrap_gui_finish DGN wayland no default none no none 2>/dev/null
+PATH="$EMPTY_PATH" DBUS_SESSION_BUS_ADDRESS="$NO_PROXY_ADDR" bwrap_gui_finish DGN wayland no no none no none 2>/dev/null
 DGN_RC=$?
 [[ $DGN_RC -eq 0 ]] && ok "dbus=none ignores a missing proxy" || fail "dbus=none returned $DGN_RC"
 has_arg DGN "${XDG_RUNTIME_DIR}/bus" && fail "dbus=none bound the bus socket" || ok "dbus=none appends no bus bind"
 
 DGU=()
-PATH="$EMPTY_PATH" DBUS_SESSION_BUS_ADDRESS="$NO_PROXY_ADDR" bwrap_gui_finish DGU wayland no default unfiltered no none 2>/dev/null
+PATH="$EMPTY_PATH" DBUS_SESSION_BUS_ADDRESS="$NO_PROXY_ADDR" bwrap_gui_finish DGU wayland no no unfiltered no none 2>/dev/null
 DGU_RC=$?
 [[ $DGU_RC -eq 0 ]] && ok "dbus=unfiltered does not require the proxy" || fail "dbus=unfiltered returned $DGU_RC"
 

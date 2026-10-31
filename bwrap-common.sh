@@ -283,13 +283,16 @@ bwrap_ro_bind_dir() {
 # ── hardened_malloc ───────────────────────────────────────────
 bwrap_hardened_malloc() {
     local -n _arr=$1
-    local _variant="${2:-light}"
+    local _variant="${2:-default}"
     local _lib="/usr/lib/libhardened_malloc.so"
     if [[ "$_variant" == "light" ]]; then
         _lib="/usr/lib/libhardened_malloc-light.so"
     fi
-    [[ -f "$_lib" ]] && _arr+=(--setenv LD_PRELOAD "$_lib")
-    :
+    if [[ ! -f "$_lib" ]]; then
+        echo "bwrap_hardened_malloc: hardened_malloc library not found: $_lib" >&2
+        return 1
+    fi
+    _arr+=(--setenv LD_PRELOAD "$_lib")
 }
 
 bwrap_no_hardened_malloc() {
@@ -583,7 +586,7 @@ bwrap_gui_setup() {
 }
 
 # ── Standard GUI sandbox: finish phase ────────────────────────
-# $4 = malloc variant (default/light/no)
+# $4 = malloc: "default" (enabled), "light" (enabled), or "no" (opt-out)
 # $5 = dbus mode: "filtered" (default), "unfiltered", or "none"
 # $6 = themes: "yes" or "no"
 # $7 = seccomp: "default" or "none" (allowlists go through bwrap_seccomp)
@@ -604,7 +607,7 @@ bwrap_gui_finish() {
     if [[ "$_malloc" == "no" ]]; then
         bwrap_no_hardened_malloc "$_v"
     else
-        bwrap_hardened_malloc "$_v" "$_malloc"
+        bwrap_hardened_malloc "$_v" "$_malloc" || return 1
     fi
     case "$_seccomp" in
         default|none) bwrap_seccomp "$_v" "$_seccomp" || return 1 ;;

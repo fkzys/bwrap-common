@@ -90,6 +90,14 @@ bwrap_sandbox A yes
 bwrap_exec "${A[@]}" -- /usr/bin/app "$@"
 ```
 
+`hardened_malloc` is opt-out: `bwrap_gui_finish` preloads it by default
+(`malloc=default`, or `malloc=light` for the light build). When called
+directly, `bwrap_hardened_malloc` also defaults to the full `default` library
+when no variant is passed. If the selected library is missing,
+`bwrap_hardened_malloc` fails and `bwrap_gui_finish` propagates that failure.
+Use `malloc=no` to opt out for incompatible applications or systems without
+the package.
+
 `bwrap_base` prepends `--clearenv` by default, so the sandbox does not inherit
 the host environment. Only variables set by `--setenv` options that follow it
 (including ones already in the array) reach the child. `TERM` is re-added by
@@ -158,8 +166,8 @@ secrets and loader/interpreter variables from the calling environment.
 | `bwrap_bind_dir` | Create state dirs on host + add `--bind` |
 | `bwrap_ro_bind_dir` | Bind pre-existing dirs read-only, skip missing |
 | `bwrap_ssh_agent` | SSH agent socket forwarding |
-| `bwrap_hardened_malloc` | Set `LD_PRELOAD` for hardened_malloc (default or light variant) |
-| `bwrap_no_hardened_malloc` | Disable hardened_malloc for incompatible apps |
+| `bwrap_hardened_malloc` | Preload hardened_malloc: full `default` when omitted, or `light`; fails if the selected library is missing; `bwrap_gui_finish` enables it by default |
+| `bwrap_no_hardened_malloc` | Opt out of hardened_malloc by masking installed variants with an empty stub |
 | `bwrap_exec` | Run bwrap as foreground child, clean up D-Bus proxy and seccomp filter fds on exit; falls back to `exec bwrap` when no proxies are active |
 | `require_dir` | Validate that directories exist, exit on missing |
 
@@ -168,7 +176,7 @@ secrets and loader/interpreter variables from the calling environment.
 | Function | Purpose |
 |---|---|
 | `bwrap_gui_setup` | `bwrap_base` + `lib64` + optional `gpu` + optional `resolv` + `runtime_dir` + `home_tmpfs`; optional `shm` and `clearenv` modes |
-| `bwrap_gui_finish` | `themes` + `wayland`/`x11` + D-Bus (`filtered` by default; `unfiltered`/`none` opt-out) + `env_base` + malloc + seccomp + `sandbox` |
+| `bwrap_gui_finish` | `themes` + `wayland`/`x11` + D-Bus (`filtered` by default; `unfiltered`/`none` opt-out) + `env_base` + malloc (enabled by default; `malloc=no` opts out) + seccomp + `sandbox` |
 
 `bwrap_gui_setup` parameters:
 
@@ -211,7 +219,7 @@ Extra `--talk`/`--own` rules can be appended per-app.
 - `$1` — array name to append bwrap arguments to
 - `$2` — display: `wayland`/`x11` (default `wayland`)
 - `$3` — network: `yes`/`no` (default `no`); `yes` adds `--share-net`
-- `$4` — malloc variant: `default`/`light`/`no`
+- `$4` — malloc: `default` (default, enabled), `light`, or `no` (opt-out)
 - `$5` — D-Bus mode: `filtered` (default), `unfiltered`, `none`; `filtered` returns non-zero if `xdg-dbus-proxy` is unavailable
 - `$6` — themes: `yes`/`no` (default `yes`)
 - `$7` — seccomp: `default`/`none` (default `default`); `default` returns non-zero if the filter blob is unavailable; use `bwrap_seccomp` directly for an allowlist
@@ -300,7 +308,7 @@ The allowlist cache key is
 - [verify-lib](https://github.com/fkzys/verify-lib) (recommended, for integrity verification before sourcing)
 - `xdg-dbus-proxy` (required for the default `filtered` D-Bus mode; optional with `dbus=none`/`unfiltered`)
 
-- [hardened_malloc](https://github.com/fkzys/hardened_malloc) (optional)
+- [hardened_malloc](https://github.com/fkzys/hardened_malloc) (required by default; opt out with `malloc=no` if it is not installed)
 ## Files
 
 | Path | Purpose |
