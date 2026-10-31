@@ -92,10 +92,15 @@ bwrap_exec "${A[@]}" -- /usr/bin/app "$@"
 
 `bwrap_base` prepends `--clearenv` by default, so the sandbox does not inherit
 the host environment. Only variables set by `--setenv` options that follow it
-(including ones already in the array) reach the child. Inherited values such as
-`TERM` and `USER` are dropped; add explicit `--setenv` options for any the
-application needs. `DISPLAY` and `WAYLAND_DISPLAY` are re-added by the display
-helpers when the corresponding socket exists.
+(including ones already in the array) reach the child. `TERM` is re-added by
+`bwrap_env_base` from the host, falling back to `xterm-256color`; `DISPLAY` and
+`WAYLAND_DISPLAY` are re-added by the display helpers when the corresponding
+socket exists.
+
+The default policy intentionally does not forward `USER`, `TZ`, `LC_*`,
+`GTK_THEME`, `QT_*`, `XDG_CURRENT_DESKTOP`, or `XDG_DATA_DIRS`. Toolkit and
+locale defaults apply inside the sandbox; add explicit `--setenv` options for
+any application that needs a specific value.
 
 Pass `no` as `bwrap_base`'s third argument, or as `bwrap_gui_setup`'s fifth
 argument, to opt out and inherit the host environment. Opting out re-exposes
@@ -122,7 +127,7 @@ secrets and loader/interpreter variables from the calling environment.
 | `bwrap_fcitx` | fcitx5 input method sockets + env |
 | `bwrap_home_tmpfs` | tmpfs `$HOME` with XDG skeleton |
 | `bwrap_runtime_dir` | XDG_RUNTIME_DIR with correct permissions |
-| `bwrap_env_base` | `HOME`, `LANG`, `PATH`, `XDG_RUNTIME_DIR` |
+| `bwrap_env_base` | `HOME`, `LANG`, `PATH`, `TERM`, `XDG_RUNTIME_DIR`, `XDG_CACHE_HOME` |
 | `bwrap_sandbox` | `--unshare-all`, optional `--share-net` / `--new-session` |
 | `bwrap_seccomp` | Add `--seccomp` from the precompiled default blocklist or a compiled syscall allowlist |
 | `bwrap_resolve_files` | Resolve file arguments to bind mounts |

@@ -54,7 +54,9 @@ bwrap_base() {
         return 2
     fi
     # Prepend: any --setenv already present in the array must run after this.
-    [[ "$_clearenv" == "yes" ]] && _arr=(--clearenv "${_arr[@]}")
+    if [[ "$_clearenv" == "yes" && "${_arr[0]:-}" != "--clearenv" ]]; then
+        _arr=(--clearenv "${_arr[@]}")
+    fi
     _arr+=(
         --ro-bind /usr /usr
         --symlink /usr/bin /bin
@@ -250,6 +252,7 @@ bwrap_env_base() {
         --setenv HOME "${HOME}"
         --setenv LANG "${LANG:-en_US.UTF-8}"
         --setenv PATH "/usr/bin:/bin"
+        --setenv TERM "${TERM:-xterm-256color}"
         --setenv XDG_RUNTIME_DIR "${XDG_RUNTIME_DIR}"
         --setenv XDG_CACHE_HOME "${HOME}/.cache"
     )

@@ -212,6 +212,11 @@ bwrap_base NO_CLEAR tmpfs no
 has_arg NO_CLEAR "--clearenv" && fail "clearenv=no still adds --clearenv" || ok "clearenv=no omits --clearenv"
 has_pair NO_CLEAR "--ro-bind" "/usr" && ok "clearenv=no keeps base mounts" || fail "clearenv=no lost base mounts"
 
+REPEATED=()
+bwrap_base REPEATED
+bwrap_base REPEATED
+[[ $(count_flag REPEATED "--clearenv") -eq 1 ]] && ok "repeated bwrap_base keeps one --clearenv" || fail "repeated bwrap_base duplicated --clearenv"
+
 CLEAR_INVALID=()
 CLEAR_INVALID_ERR="${TMPDIR_TEST}/clearenv-invalid.err"
 bwrap_base CLEAR_INVALID tmpfs invalid 2>"$CLEAR_INVALID_ERR"
@@ -267,6 +272,7 @@ C=()
 bwrap_env_base C
 has_pair C "--setenv" "HOME"            && ok "sets HOME"            || fail "HOME missing"
 has_pair C "--setenv" "PATH"            && ok "sets PATH"            || fail "PATH missing"
+has_sequence C "--setenv" "TERM" "${TERM:-xterm-256color}" && ok "sets TERM" || fail "TERM missing"
 has_pair C "--setenv" "XDG_RUNTIME_DIR" && ok "sets XDG_RUNTIME_DIR" || fail "XDG_RUNTIME_DIR missing"
 
 # ── bwrap_sandbox ──────────────────────────────────────────
