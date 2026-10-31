@@ -30,11 +30,13 @@ yay -S bwrap-common
 ### Manual
 
 ```sh
+make build
 sudo make install
 ```
 
-`make install` also compiles the seccomp helper and the architecture-specific
-default filter, so `gcc` and the `libseccomp` headers are required.
+`make install` installs the seccomp helper and the architecture-specific default
+filter built by `make build`, so `gcc` and the `libseccomp` headers are required
+before installing.
 
 ### Uninstall
 
@@ -121,7 +123,7 @@ The allowlist cache key is
 - `bubblewrap` (`bwrap`)
 - `bash`
 - `libseccomp` (runtime, for the seccomp helper)
-- `gcc` + `libseccomp` headers (build-time, for `make build`/`make install`)
+- `gcc` + `libseccomp` headers (build-time, for `make build`)
 - [verify-lib](https://github.com/fkzys/verify-lib) (recommended, for integrity verification before sourcing)
 - `xdg-dbus-proxy` (required for the default `filtered` D-Bus mode; optional with `dbus=none`/`unfiltered`)
 

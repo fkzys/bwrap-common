@@ -189,12 +189,8 @@ Build/install:
 - `bwrap-seccomp-gen --strict` rejects syscall names that no supported
   architecture knows; target-specific legacy names are still skipped with a
   warning.
-- `make install` builds first, then installs. When it is run through `sudo`, the
-  build step runs as `$SUDO_USER` and only the install step runs as root, so
-  `build/` stays user-owned. If root has no `SUDO_USER`, set
-  `BUILD_USER=<user>` explicitly.
-- `make install` installs the helper to
-  `/usr/lib/bwrap-common/bwrap-seccomp-gen` and the blob to
+- `make install` does not build; run `make build` first. It installs the helper
+  to `/usr/lib/bwrap-common/bwrap-seccomp-gen` and the blob to
   `/usr/lib/bwrap-common/seccomp/`.
 - `gcc` and the `libseccomp` headers are build-time dependencies;
   `libseccomp` is a runtime dependency.
