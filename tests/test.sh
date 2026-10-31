@@ -61,6 +61,40 @@ has_triple() {
     return 1
 }
 
+has_sequence() {
+    local -n _arr=$1; shift
+    local -a _want=("$@")
+    local _n=${#_want[@]} _i _j
+    (( _n > 0 && _n <= ${#_arr[@]} )) || return 1
+    for ((_i=0; _i <= ${#_arr[@]} - _n; _i++)); do
+        for ((_j=0; _j < _n; _j++)); do
+            [[ "${_arr[$((_i + _j))]}" == "${_want[$_j]}" ]] || break
+        done
+        (( _j == _n )) && return 0
+    done
+    return 1
+}
+
+has_ordered_pairs() {
+    local -n _arr=$1; shift
+    local _len=${#_arr[@]} _i=0 _flag _val _found
+    while (( $# >= 2 )); do
+        _flag=$1
+        _val=$2
+        shift 2
+        _found=0
+        for ((; _i < _len - 1; _i++)); do
+            if [[ "${_arr[$_i]}" == "$_flag" && "${_arr[$((_i + 1))]}" == "$_val" ]]; then
+                _i=$((_i + 2))
+                _found=1
+                break
+            fi
+        done
+        (( _found )) || return 1
+    done
+    return 0
+}
+
 count_flag() {
     local -n _arr=$1; local flag=$2; local count=0
     for arg in "${_arr[@]}"; do [[ "$arg" == "$flag" ]] && count=$((count + 1)); done
@@ -83,8 +117,40 @@ arrays_equal() {
 
 # ── Setup ───────────────────────────────────────────────────
 
-TMPDIR_TEST=$(mktemp -d)
+TMPDIR_TEST=$(mktemp -d) || {
+    echo "FATAL: cannot create temporary directory" >&2
+    exit 1
+}
+if [[ ! -w "$TMPDIR_TEST" ]]; then
+    echo "FATAL: TMPDIR_TEST is not writable: $TMPDIR_TEST" >&2
+    exit 1
+fi
 trap 'rm -rf "$TMPDIR_TEST"' EXIT
+
+# ── seccomp fixtures ────────────────────────────────────────
+
+SECCOMP_ARCH=$(_bwrap_seccomp_arch)
+if ! SECCOMP_MAGIC=$(_bwrap_seccomp_arch_magic "$SECCOMP_ARCH"); then
+    # Do not silently pretend an unsupported host is x86_64.  BWRAP_SECCOMP_ARCH
+    # is an explicit opt-in for cross-arch fixture testing only.
+    echo "FATAL: unsupported host architecture '$SECCOMP_ARCH'" >&2
+    echo "Set BWRAP_SECCOMP_ARCH to a supported architecture only for cross-arch testing." >&2
+    exit 1
+fi
+
+write_fake_blob() {
+    local _file=$1 _magic=$2
+    printf '\x20\x00\x00\x00\x04\x00\x00\x00\x15\x00\x00\x01' > "$_file"
+    printf '%b' "\\x${_magic:0:2}\\x${_magic:2:2}\\x${_magic:4:2}\\x${_magic:6:2}" >> "$_file"
+}
+
+SECCOMP_FIXTURE_DIR="${TMPDIR_TEST}/seccomp"
+mkdir -p "$SECCOMP_FIXTURE_DIR"
+SECCOMP_FIXTURE_BLOB="${SECCOMP_FIXTURE_DIR}/default.${SECCOMP_ARCH}.bpf"
+write_fake_blob "$SECCOMP_FIXTURE_BLOB" "$SECCOMP_MAGIC"
+
+export BWRAP_SECCOMP_DIR="$SECCOMP_FIXTURE_DIR"
+export BWRAP_SECCOMP_CACHE_DIR="${TMPDIR_TEST}/seccomp-cache"
 
 # ── Guard re-source ─────────────────────────────────────────
 
@@ -105,7 +171,7 @@ FUNCTIONS=(
     bwrap_home_tmpfs bwrap_runtime_dir bwrap_env_base
     bwrap_bind_dir bwrap_ro_bind_dir
     bwrap_hardened_malloc bwrap_no_hardened_malloc
-    bwrap_sandbox bwrap_ssh_agent
+    bwrap_sandbox bwrap_seccomp bwrap_ssh_agent
     bwrap_resolve_files
     bwrap_gui_setup bwrap_gui_finish
     bwrap_exec
@@ -129,9 +195,64 @@ section "bwrap_base"
 A=()
 bwrap_base A
 [[ ${#A[@]} -gt 0 ]]            && ok "produces non-empty array"       || fail "empty array"
+[[ "${A[0]}" == "--clearenv" ]] && ok "--clearenv is the first argument" || fail "--clearenv is not first"
 has_pair A "--ro-bind" "/usr"    && ok "--ro-bind /usr present"         || fail "--ro-bind /usr missing"
 has_pair A "--proc" "/proc"      && ok "--proc /proc present"           || fail "--proc /proc missing"
 has_pair A "--tmpfs" "/tmp"      && ok "--tmpfs /tmp present"           || fail "--tmpfs /tmp missing"
+has_sequence A "--perms" "1777" "--tmpfs" "/dev/shm" && ok "default shm uses adjacent private tmpfs perms 1777" || fail "default shm tmpfs sequence missing"
+has_pair A "--bind" "/dev/shm"   && fail "default shm binds host /dev/shm" || ok "default shm does not bind host /dev/shm"
+
+PRESET=()
+PRESET+=(--setenv KEEP value)
+bwrap_base PRESET
+has_sequence PRESET "--clearenv" "--setenv" "KEEP" && ok "existing --setenv is kept after --clearenv" || fail "existing --setenv was cleared"
+
+NO_CLEAR=()
+bwrap_base NO_CLEAR tmpfs no
+has_arg NO_CLEAR "--clearenv" && fail "clearenv=no still adds --clearenv" || ok "clearenv=no omits --clearenv"
+has_pair NO_CLEAR "--ro-bind" "/usr" && ok "clearenv=no keeps base mounts" || fail "clearenv=no lost base mounts"
+
+REPEATED=()
+bwrap_base REPEATED
+bwrap_base REPEATED
+[[ $(count_flag REPEATED "--clearenv") -eq 1 ]] && ok "repeated bwrap_base keeps one --clearenv" || fail "repeated bwrap_base duplicated --clearenv"
+
+CLEAR_INVALID=()
+CLEAR_INVALID_ERR="${TMPDIR_TEST}/clearenv-invalid.err"
+bwrap_base CLEAR_INVALID tmpfs invalid 2>"$CLEAR_INVALID_ERR"
+CLEAR_INVALID_RC=$?
+CLEAR_INVALID_MSG="bwrap_base: invalid clearenv mode 'invalid' (expected yes or no)"
+if [[ $CLEAR_INVALID_RC -eq 2 ]] && grep -qxF "$CLEAR_INVALID_MSG" "$CLEAR_INVALID_ERR"; then
+    ok "invalid clearenv mode is rejected by bwrap_base with its own message"
+else
+    fail "invalid bwrap_base clearenv mode (rc=$CLEAR_INVALID_RC, stderr=$(cat "$CLEAR_INVALID_ERR" 2>/dev/null))"
+fi
+
+SHM_BIND=()
+bwrap_base SHM_BIND bind
+has_sequence SHM_BIND "--bind" "/dev/shm" "/dev/shm" && ok "shm=bind has exact source and target path" || fail "shm=bind source/target mismatch"
+has_ordered_pairs SHM_BIND "--dev" "/dev" "--bind" "/dev/shm" "--ro-bind" "/etc" && ok "shm=bind is ordered after --dev and before --ro-bind /etc" || fail "shm=bind ordering missing"
+has_pair SHM_BIND "--tmpfs" "/dev/shm" && fail "shm=bind unexpectedly adds tmpfs" || ok "shm=bind does not add tmpfs"
+has_pair SHM_BIND "--perms" "1777" && fail "shm=bind unexpectedly adds perms" || ok "shm=bind does not add perms"
+
+SHM_TMPFS=()
+bwrap_base SHM_TMPFS tmpfs
+if arrays_equal SHM_TMPFS A; then
+    ok "explicit shm=tmpfs matches default"
+else
+    fail "explicit shm=tmpfs differs from default"
+fi
+
+SHM_INVALID=()
+SHM_INVALID_ERR="${TMPDIR_TEST}/shm-invalid.err"
+bwrap_base SHM_INVALID invalid 2>"$SHM_INVALID_ERR"
+SHM_INVALID_RC=$?
+SHM_INVALID_MSG="bwrap_base: invalid shm mode 'invalid' (expected tmpfs or bind)"
+if [[ $SHM_INVALID_RC -eq 2 ]] && grep -qxF "$SHM_INVALID_MSG" "$SHM_INVALID_ERR"; then
+    ok "invalid shm mode is rejected by bwrap_base with its own message"
+else
+    fail "invalid bwrap_base shm mode (rc=$SHM_INVALID_RC, stderr=$(cat "$SHM_INVALID_ERR" 2>/dev/null))"
+fi
 
 # ── bwrap_home_tmpfs ────────────────────────────────────────
 
@@ -151,7 +272,9 @@ C=()
 bwrap_env_base C
 has_pair C "--setenv" "HOME"            && ok "sets HOME"            || fail "HOME missing"
 has_pair C "--setenv" "PATH"            && ok "sets PATH"            || fail "PATH missing"
+has_sequence C "--setenv" "TERM" "${TERM:-xterm-256color}" && ok "sets TERM" || fail "TERM missing"
 has_pair C "--setenv" "XDG_RUNTIME_DIR" && ok "sets XDG_RUNTIME_DIR" || fail "XDG_RUNTIME_DIR missing"
+has_sequence C "--setenv" "XDG_CACHE_HOME" "${HOME}/.cache" && ok "normalizes XDG_CACHE_HOME to private HOME/.cache" || fail "XDG_CACHE_HOME not normalized"
 
 # ── bwrap_sandbox ──────────────────────────────────────────
 
@@ -271,8 +394,41 @@ section "bwrap_gui_setup"
 P=()
 bwrap_gui_setup P no
 [[ ${#P[@]} -gt 0 ]]         && ok "produces non-empty array"       || fail "empty array"
+[[ "${P[0]}" == "--clearenv" ]] && ok "default gui setup clears env" || fail "default gui setup did not clear env"
 has_pair P "--ro-bind" "/usr" && ok "includes base --ro-bind /usr"   || fail "base --ro-bind /usr missing"
 has_pair P "--tmpfs" "$HOME"  && ok "includes home tmpfs"            || fail "home tmpfs missing"
+has_pair P "--tmpfs" "/dev/shm" && ok "default gui setup uses private shm" || fail "default gui setup shm missing"
+
+SETUP_NO_CLEAR=()
+bwrap_gui_setup SETUP_NO_CLEAR no no tmpfs no
+has_arg SETUP_NO_CLEAR "--clearenv" && fail "gui clearenv=no still adds --clearenv" || ok "gui clearenv=no omits --clearenv"
+
+SETUP_CLEAR_INVALID=()
+SETUP_CLEAR_INVALID_ERR="${TMPDIR_TEST}/setup-clearenv-invalid.err"
+bwrap_gui_setup SETUP_CLEAR_INVALID no no tmpfs invalid 2>"$SETUP_CLEAR_INVALID_ERR"
+SETUP_CLEAR_INVALID_RC=$?
+SETUP_CLEAR_INVALID_MSG="bwrap_gui_setup: invalid clearenv mode 'invalid' (expected yes or no)"
+if [[ $SETUP_CLEAR_INVALID_RC -eq 2 ]] && grep -qxF "$SETUP_CLEAR_INVALID_MSG" "$SETUP_CLEAR_INVALID_ERR"; then
+    ok "gui setup rejects invalid clearenv mode with its own message"
+else
+    fail "invalid bwrap_gui_setup clearenv mode (rc=$SETUP_CLEAR_INVALID_RC, stderr=$(cat "$SETUP_CLEAR_INVALID_ERR" 2>/dev/null))"
+fi
+
+SETUP_SHM_BIND=()
+bwrap_gui_setup SETUP_SHM_BIND no no bind
+has_sequence SETUP_SHM_BIND "--bind" "/dev/shm" "/dev/shm" && ok "gui setup forwards exact shm=bind sequence" || fail "gui setup did not forward shm=bind"
+has_pair SETUP_SHM_BIND "--tmpfs" "/dev/shm" && fail "gui setup shm=bind added tmpfs" || ok "gui setup shm=bind omits tmpfs"
+
+SETUP_SHM_INVALID=()
+SETUP_SHM_INVALID_ERR="${TMPDIR_TEST}/setup-shm-invalid.err"
+bwrap_gui_setup SETUP_SHM_INVALID no no invalid 2>"$SETUP_SHM_INVALID_ERR"
+SETUP_SHM_INVALID_RC=$?
+SETUP_SHM_INVALID_MSG="bwrap_gui_setup: invalid shm mode 'invalid' (expected tmpfs or bind)"
+if [[ $SETUP_SHM_INVALID_RC -eq 2 ]] && grep -qxF "$SETUP_SHM_INVALID_MSG" "$SETUP_SHM_INVALID_ERR"; then
+    ok "gui setup rejects invalid shm mode with its own message"
+else
+    fail "invalid bwrap_gui_setup shm mode (rc=$SETUP_SHM_INVALID_RC, stderr=$(cat "$SETUP_SHM_INVALID_ERR" 2>/dev/null))"
+fi
 
 Q=()
 bwrap_gui_setup Q yes
@@ -302,10 +458,10 @@ bwrap_gui_setup SETUP_GPU_NO no no
 SETUP_GPU_DEFAULT=()
 bwrap_gui_setup SETUP_GPU_DEFAULT no
 
-if arrays_equal SETUP_GPU_DEFAULT SETUP_GPU_YES; then
-    ok "default gpu argument matches gpu=yes"
+if arrays_equal SETUP_GPU_DEFAULT SETUP_GPU_NO; then
+    ok "default gpu argument matches gpu=no"
 else
-    fail "default gpu argument differs from gpu=yes"
+    fail "default gpu argument differs from gpu=no"
 fi
 
 if arrays_equal SETUP_GPU_YES EXPECT_GPU_YES; then
@@ -386,6 +542,12 @@ bwrap_gui_finish R wayland no default unfiltered
 [[ ${#R[@]} -gt 0 ]]      && ok "produces non-empty array"   || fail "empty array"
 has_arg R "--unshare-all"  && ok "--unshare-all present"      || fail "--unshare-all missing"
 
+CLEAR_GUI=()
+bwrap_base CLEAR_GUI
+bwrap_gui_finish CLEAR_GUI wayland no default unfiltered no none
+[[ "${CLEAR_GUI[0]}" == "--clearenv" ]] && ok "--clearenv survives gui_finish prepend" || fail "--clearenv is not first after gui_finish"
+has_pair CLEAR_GUI "--setenv" "HOME" && ok "explicit HOME survives --clearenv" || fail "HOME setenv missing after --clearenv"
+
 S=()
 bwrap_gui_finish S wayland no no none
 if [[ -f /usr/lib/libhardened_malloc.so.empty ]]; then
@@ -394,6 +556,226 @@ if [[ -f /usr/lib/libhardened_malloc.so.empty ]]; then
 else
     ok "malloc=no stub bind skipped (libhardened_malloc.so.empty not installed)"
 fi
+
+# ── bwrap_gui_finish (seccomp) ──────────────────────────────
+
+section "bwrap_gui_finish (seccomp)"
+
+SN=()
+bwrap_gui_finish SN wayland no default unfiltered no default
+SN_RC=$?
+[[ $SN_RC -eq 0 ]] && ok "seccomp=default returns 0" || fail "seccomp=default returned $SN_RC"
+has_arg SN "--seccomp" && ok "seccomp=default appends --seccomp" || fail "seccomp=default missing --seccomp"
+
+SO=()
+bwrap_gui_finish SO wayland no default unfiltered no none
+SO_RC=$?
+[[ $SO_RC -eq 0 ]] && ok "seccomp=none returns 0" || fail "seccomp=none returned $SO_RC"
+has_arg SO "--seccomp" && fail "seccomp=none appended --seccomp" || ok "seccomp=none appends nothing"
+
+SP=()
+bwrap_gui_finish SP wayland no default unfiltered no "openat" 2>/dev/null
+SP_RC=$?
+[[ $SP_RC -eq 1 ]] && ok "allowlist via gui_finish is rejected" || fail "allowlist via gui_finish returned $SP_RC"
+has_arg SP "--seccomp" && fail "rejected allowlist appended --seccomp" || ok "rejected allowlist appends nothing"
+
+SNM=()
+BWRAP_SECCOMP_DIR="${TMPDIR_TEST}/missing" bwrap_gui_finish SNM wayland no default unfiltered no default 2>/dev/null
+SNM_RC=$?
+[[ $SNM_RC -eq 1 ]] && ok "seccomp=default fails when the blob is missing" || fail "missing seccomp blob returned $SNM_RC"
+has_arg SNM "--seccomp" && fail "failed seccomp setup appended --seccomp" || ok "failed seccomp setup appends nothing"
+
+SOM=()
+BWRAP_SECCOMP_DIR="${TMPDIR_TEST}/missing" bwrap_gui_finish SOM wayland no default unfiltered no none 2>/dev/null
+SOM_RC=$?
+[[ $SOM_RC -eq 0 ]] && ok "seccomp=none ignores a missing blob" || fail "seccomp=none returned $SOM_RC"
+has_arg SOM "--seccomp" && fail "seccomp=none appended --seccomp" || ok "seccomp=none appends nothing when the blob is missing"
+
+# ── bwrap_seccomp ───────────────────────────────────────────
+
+section "bwrap_seccomp"
+
+SA=()
+bwrap_seccomp SA none
+SA_RC=$?
+[[ $SA_RC -eq 0 ]] && ok "none returns 0" || fail "none returned $SA_RC"
+[[ ${#SA[@]} -eq 0 ]] && ok "none appends nothing" || fail "none appended ${SA[*]}"
+
+SB=()
+bwrap_seccomp SB default
+SB_RC=$?
+[[ $SB_RC -eq 0 ]] && ok "default returns 0 with a valid fixture" || fail "default returned $SB_RC"
+if [[ ${#SB[@]} -eq 2 && "${SB[0]}" == "--seccomp" && "${SB[1]}" =~ ^[0-9]+$ ]]; then
+    ok "default appends --seccomp <fd>"
+else
+    fail "default output was: ${SB[*]}"
+fi
+SECCOMP_FD="${SB[1]:-}"
+_bwrap_seccomp_close_fds
+if [[ -n "$SECCOMP_FD" ]] && { : <&"$SECCOMP_FD"; } 2>/dev/null; then
+    fail "seccomp filter fd was left open"
+else
+    ok "seccomp filter fd is closed by cleanup"
+fi
+
+TRAP_LOG="${TMPDIR_TEST}/cleanup-trap.log"
+(
+    trap 'printf "caller rc=%s\n" "$?" >> "$TRAP_LOG"' EXIT
+    _bwrap_cleanup() { printf 'cleanup\n' >> "$TRAP_LOG"; }
+    _bwrap_install_cleanup
+    _bwrap_install_cleanup
+    exit 7
+)
+TRAP_RC=$?
+TRAP_OUT=$(cat "$TRAP_LOG" 2>/dev/null)
+if [[ $TRAP_RC -eq 7 && "$TRAP_OUT" == $'cleanup\ncaller rc=7' ]]; then
+    ok "existing EXIT trap is preserved and cleanup runs once"
+else
+    fail "EXIT trap chain failed (rc=$TRAP_RC, out=$TRAP_OUT)"
+fi
+
+SC=()
+BWRAP_SECCOMP_DIR="${TMPDIR_TEST}/missing" bwrap_seccomp SC default 2>/dev/null
+SC_RC=$?
+[[ $SC_RC -eq 1 ]] && ok "missing default fails closed" || fail "missing default returned $SC_RC"
+[[ ${#SC[@]} -eq 0 ]] && ok "missing default appends nothing" || fail "missing default appended ${SC[*]}"
+
+BAD_SIZE_DIR="${TMPDIR_TEST}/bad-size"
+mkdir -p "$BAD_SIZE_DIR"
+head -c 12 /dev/zero > "${BAD_SIZE_DIR}/default.${SECCOMP_ARCH}.bpf"
+SE=()
+BWRAP_SECCOMP_DIR="$BAD_SIZE_DIR" bwrap_seccomp SE default 2>/dev/null
+SE_RC=$?
+[[ $SE_RC -eq 1 && ${#SE[@]} -eq 0 ]] && ok "invalid size fails closed" || fail "invalid size returned $SE_RC"
+
+if [[ "$SECCOMP_MAGIC" != "00000000" ]]; then
+    BAD_ARCH_DIR="${TMPDIR_TEST}/bad-arch"
+    mkdir -p "$BAD_ARCH_DIR"
+    write_fake_blob "${BAD_ARCH_DIR}/default.${SECCOMP_ARCH}.bpf" "deadbeef"
+    SG=()
+    BWRAP_SECCOMP_DIR="$BAD_ARCH_DIR" bwrap_seccomp SG default 2>/dev/null
+    SG_RC=$?
+    [[ $SG_RC -eq 1 && ${#SG[@]} -eq 0 ]] && ok "arch mismatch fails closed" || fail "arch mismatch returned $SG_RC"
+else
+    ok "arch mismatch test skipped (unknown host arch)"
+fi
+
+FAKE_GEN="${TMPDIR_TEST}/fake-seccomp-gen"
+GEN_COUNTER="${TMPDIR_TEST}/gen-count"
+cat > "$FAKE_GEN" <<'GEN'
+#!/usr/bin/env bash
+printf 'x' >> "${FAKE_GEN_COUNTER:?}"
+_out=""
+while (($#)); do
+    case "$1" in
+        -o) _out=$2; shift 2 ;;
+        --allowlist) shift 2 ;;
+        *) shift ;;
+    esac
+done
+cp "${FAKE_GEN_BLOB:?}" "$_out"
+GEN
+chmod +x "$FAKE_GEN"
+
+export FAKE_GEN_COUNTER="$GEN_COUNTER"
+export FAKE_GEN_BLOB="$SECCOMP_FIXTURE_BLOB"
+export BWRAP_SECCOMP_GEN="$FAKE_GEN"
+rm -rf "$BWRAP_SECCOMP_CACHE_DIR" "$GEN_COUNTER"
+
+SI=()
+bwrap_seccomp SI "openat read"
+SI_RC=$?
+SJ=()
+bwrap_seccomp SJ "openat read"
+SJ_RC=$?
+GEN_CALLS=$(wc -c < "$GEN_COUNTER" 2>/dev/null || echo 0)
+if [[ $SI_RC -eq 0 && $SJ_RC -eq 0 && "$GEN_CALLS" -eq 1 ]]; then
+    ok "allowlist compiles once and reuses the cache"
+else
+    fail "allowlist rc=$SI_RC/$SJ_RC generator_calls=$GEN_CALLS"
+fi
+if [[ ${#SI[@]} -eq 2 && "${SI[0]}" == "--seccomp" && "${SI[1]}" =~ ^[0-9]+$ ]]; then
+    ok "allowlist appends --seccomp <fd>"
+else
+    fail "allowlist output was: ${SI[*]}"
+fi
+CACHE_BLOB=$(find "$BWRAP_SECCOMP_CACHE_DIR" -name '*.bpf' -type f | head -n1)
+if [[ -n "$CACHE_BLOB" && "$(stat -c %a "$CACHE_BLOB")" == "600" ]]; then
+    ok "cached allowlist filter is mode 600"
+else
+    fail "cached allowlist filter mode: $(stat -c %a "${CACHE_BLOB:-/nonexistent}" 2>/dev/null)"
+fi
+
+SK=()
+bwrap_seccomp SK "" 2>/dev/null
+SK_RC=$?
+[[ $SK_RC -eq 1 && ${#SK[@]} -eq 0 ]] && ok "empty allowlist fails closed" || fail "empty allowlist returned $SK_RC"
+
+FAIL_GEN="${TMPDIR_TEST}/fail-seccomp-gen"
+printf '#!/usr/bin/env bash\nexit 2\n' > "$FAIL_GEN"
+chmod +x "$FAIL_GEN"
+SL=()
+BWRAP_SECCOMP_GEN="$FAIL_GEN" bwrap_seccomp SL "openat" 2>/dev/null
+SL_RC=$?
+[[ $SL_RC -eq 1 && ${#SL[@]} -eq 0 ]] && ok "generator failure fails closed" || fail "generator failure returned $SL_RC"
+LEFT=$(find "$BWRAP_SECCOMP_CACHE_DIR" -name '*.tmp.*' -type f | wc -l)
+[[ "$LEFT" -eq 0 ]] && ok "generator failure leaves no temp files" || fail "temp files left: $LEFT"
+
+SM=(--seccomp 3)
+bwrap_seccomp SM default 2>/dev/null
+SM_RC=$?
+[[ $SM_RC -eq 1 && ${#SM[@]} -eq 2 ]] && ok "existing --seccomp is rejected" || fail "duplicate --seccomp returned $SM_RC"
+
+unset BWRAP_SECCOMP_GEN FAKE_GEN_COUNTER FAKE_GEN_BLOB
+
+# ── seccomp architecture mapping ────────────────────────────
+
+section "seccomp architecture mapping"
+
+for pair in s390x:80000016 mips:00000008 mips64:80000008 \
+            mips64n32:a0000008 parisc:0000000f parisc64:8000000f \
+            ppc64:80000015 ppc64le:150000c0; do
+    arch=${pair%%:*}
+    want=${pair#*:}
+    got=$(_bwrap_seccomp_arch_magic "$arch" 2>/dev/null)
+    [[ "$got" == "$want" ]] && ok "arch $arch -> $want" || fail "arch $arch -> '${got:-none}', want $want"
+done
+if _bwrap_seccomp_arch_magic no-such-arch >/dev/null 2>&1; then
+    fail "unknown arch mapping is rejected"
+else
+    ok "unknown arch mapping is rejected"
+fi
+
+S390_DIR="${TMPDIR_TEST}/seccomp-s390x"
+mkdir -p "$S390_DIR"
+write_fake_blob "${S390_DIR}/default.s390x.bpf" "80000016"
+S390=()
+BWRAP_SECCOMP_ARCH=s390x BWRAP_SECCOMP_DIR="$S390_DIR" bwrap_seccomp S390 default
+S390_RC=$?
+if [[ $S390_RC -eq 0 && ${#S390[@]} -eq 2 && "${S390[0]}" == "--seccomp" ]]; then
+    ok "s390x big-endian fixture is accepted"
+else
+    fail "s390x fixture returned $S390_RC (${S390[*]})"
+fi
+_bwrap_seccomp_close_fds
+
+write_fake_blob "${S390_DIR}/default.s390x.bpf" "16000080"
+S390BAD=()
+BWRAP_SECCOMP_ARCH=s390x BWRAP_SECCOMP_DIR="$S390_DIR" bwrap_seccomp S390BAD default 2>/dev/null
+S390BAD_RC=$?
+[[ $S390BAD_RC -eq 1 && ${#S390BAD[@]} -eq 0 ]] \
+    && ok "s390x little-endian fixture is rejected" \
+    || fail "s390x wrong-endian fixture returned $S390BAD_RC"
+
+UNKNOWN_DIR="${TMPDIR_TEST}/seccomp-unknown"
+mkdir -p "$UNKNOWN_DIR"
+write_fake_blob "${UNKNOWN_DIR}/default.weird.bpf" "3e0000c0"
+SU=()
+BWRAP_SECCOMP_ARCH=weird BWRAP_SECCOMP_DIR="$UNKNOWN_DIR" bwrap_seccomp SU default 2>/dev/null
+SU_RC=$?
+[[ $SU_RC -eq 1 && ${#SU[@]} -eq 0 ]] \
+    && ok "unknown architecture fails closed" \
+    || fail "unknown architecture returned $SU_RC"
 
 # ── bwrap_ssh_agent ─────────────────────────────────────────
 
@@ -411,6 +793,50 @@ section "bwrap_dbus_system"
 U=()
 bwrap_dbus_system U
 ok "bwrap_dbus_system runs without error"
+
+# ── bwrap_dbus_filtered ─────────────────────────────────────
+
+section "bwrap_dbus_filtered"
+
+EMPTY_PATH="${TMPDIR_TEST}/empty-path"
+mkdir -p "$EMPTY_PATH"
+NO_PROXY_ADDR="unix:path=/nonexistent"
+
+DF=()
+PATH="$EMPTY_PATH" DBUS_SESSION_BUS_ADDRESS="$NO_PROXY_ADDR" bwrap_dbus_filtered DF 2>/dev/null
+DF_RC=$?
+[[ $DF_RC -eq 1 ]] && ok "missing xdg-dbus-proxy fails closed" || fail "missing proxy returned $DF_RC"
+[[ ${#DF[@]} -eq 0 ]] && ok "missing proxy appends nothing" || fail "missing proxy appended ${DF[*]}"
+
+DC=()
+PATH="$EMPTY_PATH" DBUS_SESSION_BUS_ADDRESS="$NO_PROXY_ADDR" bwrap_dbus_common DC 2>/dev/null
+DC_RC=$?
+[[ $DC_RC -eq 1 && ${#DC[@]} -eq 0 ]] && ok "bwrap_dbus_common propagates the missing proxy error" || fail "bwrap_dbus_common returned $DC_RC"
+
+DGF=()
+PATH="$EMPTY_PATH" DBUS_SESSION_BUS_ADDRESS="$NO_PROXY_ADDR" bwrap_gui_finish DGF wayland no default filtered no none 2>/dev/null
+DGF_RC=$?
+[[ $DGF_RC -eq 1 ]] && ok "dbus=filtered fails when the proxy is missing" || fail "dbus=filtered returned $DGF_RC"
+has_arg DGF "${XDG_RUNTIME_DIR}/bus" && fail "failed dbus=filtered bound the bus socket" || ok "failed dbus=filtered appends no bus bind"
+has_arg DGF "DBUS_SESSION_BUS_ADDRESS" && fail "failed dbus=filtered set the bus address" || ok "failed dbus=filtered appends no bus env"
+
+DGD=()
+PATH="$EMPTY_PATH" DBUS_SESSION_BUS_ADDRESS="$NO_PROXY_ADDR" bwrap_gui_finish DGD wayland no default 2>/dev/null
+DGD_RC=$?
+[[ $DGD_RC -eq 1 ]] && ok "dbus defaults to filtered when the mode is omitted" || fail "default dbus mode returned $DGD_RC"
+has_arg DGD "${XDG_RUNTIME_DIR}/bus" && fail "default dbus mode bound the bus socket" || ok "default dbus mode appends no bus bind"
+has_arg DGD "DBUS_SESSION_BUS_ADDRESS" && fail "default dbus mode set the bus address" || ok "default dbus mode appends no bus env"
+
+DGN=()
+PATH="$EMPTY_PATH" DBUS_SESSION_BUS_ADDRESS="$NO_PROXY_ADDR" bwrap_gui_finish DGN wayland no default none no none 2>/dev/null
+DGN_RC=$?
+[[ $DGN_RC -eq 0 ]] && ok "dbus=none ignores a missing proxy" || fail "dbus=none returned $DGN_RC"
+has_arg DGN "${XDG_RUNTIME_DIR}/bus" && fail "dbus=none bound the bus socket" || ok "dbus=none appends no bus bind"
+
+DGU=()
+PATH="$EMPTY_PATH" DBUS_SESSION_BUS_ADDRESS="$NO_PROXY_ADDR" bwrap_gui_finish DGU wayland no default unfiltered no none 2>/dev/null
+DGU_RC=$?
+[[ $DGU_RC -eq 0 ]] && ok "dbus=unfiltered does not require the proxy" || fail "dbus=unfiltered returned $DGU_RC"
 
 # ── bwrap_exec ──────────────────────────────────────────────
 
@@ -449,6 +875,10 @@ run_bwrap_exec() {
 
 run_bwrap_exec_proxy() {
     (
+        # Most proxy tests only inspect args/stdin/status. Clear the harness
+        # EXIT trap here; Test 7 calls bwrap_exec directly to verify that a
+        # caller trap and proxy cleanup coexist.
+        trap - EXIT
         export PATH="${FAKEBIN}:${PATH}"
         _BWRAP_DBUS_PROXY_PIDS=(999999)
         _BWRAP_DBUS_PROXY_SOCKETS=()
@@ -553,6 +983,31 @@ if [[ $RC6 -eq 7 ]] && [[ "$CLEANUP_COUNT6" -eq 1 ]]; then
     ok "proxy branch propagates non-zero exit status and runs cleanup exactly once"
 else
     fail "proxy branch propagates non-zero exit status and runs cleanup exactly once"
+fi
+
+# Test 7: Proxy branch: cleanup runs first, then the caller's EXIT trap,
+# with the original bwrap exit status preserved.
+ARGS_FILE7="${TMPDIR_TEST}/args7"
+ORDER_FILE7="${TMPDIR_TEST}/order7"
+: > "$ORDER_FILE7"
+unset FAKE_BWRAP_ARGS_FILE FAKE_BWRAP_STDIN_FILE FAKE_BWRAP_EXIT FAKE_CLEANUP_FILE
+export FAKE_BWRAP_ARGS_FILE="$ARGS_FILE7"
+export FAKE_BWRAP_EXIT=7
+(
+    trap 'printf "caller:%s\n" "$?" >> "$ORDER_FILE7"' EXIT
+    export PATH="${FAKEBIN}:${PATH}"
+    _BWRAP_DBUS_PROXY_PIDS=(999999)
+    _BWRAP_DBUS_PROXY_SOCKETS=()
+    _bwrap_dbus_cleanup() { printf 'cleanup\n' >> "$ORDER_FILE7"; }
+    bwrap_exec --test < /dev/null
+)
+RC7=$?
+GOT_ORDER7=$(cat "$ORDER_FILE7" 2>/dev/null)
+EXPECTED_ORDER7=$'cleanup\ncaller:7'
+if [[ $RC7 -eq 7 && "$GOT_ORDER7" == "$EXPECTED_ORDER7" ]]; then
+    ok "proxy branch runs cleanup then caller EXIT trap, preserving status"
+else
+    fail "proxy branch EXIT order/status (rc=$RC7, got='$GOT_ORDER7', want='$EXPECTED_ORDER7')"
 fi
 
 # ── Summary ─────────────────────────────────────────────────
