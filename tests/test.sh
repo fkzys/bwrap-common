@@ -157,6 +157,30 @@ bwrap_base A
 has_pair A "--ro-bind" "/usr"    && ok "--ro-bind /usr present"         || fail "--ro-bind /usr missing"
 has_pair A "--proc" "/proc"      && ok "--proc /proc present"           || fail "--proc /proc missing"
 has_pair A "--tmpfs" "/tmp"      && ok "--tmpfs /tmp present"           || fail "--tmpfs /tmp missing"
+has_pair A "--perms" "1777"      && ok "default shm uses private tmpfs perms 1777" || fail "default shm perms missing"
+has_pair A "--tmpfs" "/dev/shm"  && ok "default shm uses private tmpfs" || fail "default shm tmpfs missing"
+has_pair A "--bind" "/dev/shm"   && fail "default shm binds host /dev/shm" || ok "default shm does not bind host /dev/shm"
+
+SHM_BIND=()
+bwrap_base SHM_BIND bind
+has_pair SHM_BIND "--bind" "/dev/shm" && ok "shm=bind binds host /dev/shm" || fail "shm=bind host bind missing"
+has_pair SHM_BIND "--tmpfs" "/dev/shm" && fail "shm=bind unexpectedly adds tmpfs" || ok "shm=bind does not add tmpfs"
+has_pair SHM_BIND "--perms" "1777" && fail "shm=bind unexpectedly adds perms" || ok "shm=bind does not add perms"
+
+SHM_TMPFS=()
+bwrap_base SHM_TMPFS tmpfs
+if arrays_equal SHM_TMPFS A; then
+    ok "explicit shm=tmpfs matches default"
+else
+    fail "explicit shm=tmpfs differs from default"
+fi
+
+SHM_INVALID=()
+if bwrap_base SHM_INVALID invalid 2>/dev/null; then
+    fail "invalid shm mode was accepted"
+else
+    ok "invalid shm mode is rejected"
+fi
 
 # ── bwrap_home_tmpfs ────────────────────────────────────────
 
@@ -298,6 +322,12 @@ bwrap_gui_setup P no
 [[ ${#P[@]} -gt 0 ]]         && ok "produces non-empty array"       || fail "empty array"
 has_pair P "--ro-bind" "/usr" && ok "includes base --ro-bind /usr"   || fail "base --ro-bind /usr missing"
 has_pair P "--tmpfs" "$HOME"  && ok "includes home tmpfs"            || fail "home tmpfs missing"
+has_pair P "--tmpfs" "/dev/shm" && ok "default gui setup uses private shm" || fail "default gui setup shm missing"
+
+SETUP_SHM_BIND=()
+bwrap_gui_setup SETUP_SHM_BIND no no bind
+has_pair SETUP_SHM_BIND "--bind" "/dev/shm" && ok "gui setup forwards shm=bind" || fail "gui setup did not forward shm=bind"
+has_pair SETUP_SHM_BIND "--tmpfs" "/dev/shm" && fail "gui setup shm=bind added tmpfs" || ok "gui setup shm=bind omits tmpfs"
 
 Q=()
 bwrap_gui_setup Q yes

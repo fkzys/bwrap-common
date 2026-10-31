@@ -24,8 +24,17 @@ require_dir() {
 }
 
 # ── Common base bwrap args ────────────────────────────────────
+# $2 = shm mode: "tmpfs" (default, private) or "bind" (host /dev/shm)
 bwrap_base() {
     local -n _arr=$1
+    local _shm="${2:-tmpfs}"
+    case "$_shm" in
+        tmpfs|bind) ;;
+        *)
+            echo "bwrap_base: invalid shm mode '$_shm' (expected tmpfs or bind)" >&2
+            return 2
+            ;;
+    esac
     _arr+=(
         --ro-bind /usr /usr
         --symlink /usr/bin /bin
@@ -35,9 +44,13 @@ bwrap_base() {
         --ro-bind /sys /sys
         --dev /dev
         --tmpfs /tmp
-        --dev-bind /dev/shm /dev/shm
-        --ro-bind /etc /etc
     )
+    if [[ "$_shm" == "bind" ]]; then
+        _arr+=(--bind /dev/shm /dev/shm)
+    else
+        _arr+=(--perms 1777 --tmpfs /dev/shm)
+    fi
+    _arr+=(--ro-bind /etc /etc)
 }
 
 # ── GPU + NVIDIA ──────────────────────────────────────────────
@@ -525,9 +538,10 @@ bwrap_ssh_agent() {
 # ── Standard GUI sandbox: setup phase ─────────────────────────
 # $2 = network: "yes" or "no"
 # $3 = GPU: "yes" or "no"
+# $4 = shm mode: "tmpfs" (default, private) or "bind" (host /dev/shm)
 bwrap_gui_setup() {
-    local _v=$1 _net="${2:-no}" _gpu="${3:-no}"
-    bwrap_base "$_v"
+    local _v=$1 _net="${2:-no}" _gpu="${3:-no}" _shm="${4:-tmpfs}"
+    bwrap_base "$_v" "$_shm" || return
     bwrap_lib64 "$_v"
     [[ "$_gpu" == "yes" ]] && bwrap_gpu "$_v"
     [[ "$_net" == "yes" ]] && bwrap_resolv "$_v"

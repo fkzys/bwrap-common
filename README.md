@@ -59,7 +59,7 @@ Typical GUI wrapper using high-level composites:
 
 ```sh
 A=()
-bwrap_gui_setup A yes yes                # yes = network (adds resolv), yes = gpu
+bwrap_gui_setup A yes yes tmpfs          # network, gpu, shm=tmpfs (private; default)
 bwrap_bind_dir A "${HOME}/.config/app" "${HOME}/Data"
 bwrap_ro_bind_dir A "${MEDIA_DIR}"
 bwrap_audio A
@@ -71,7 +71,7 @@ Equivalent using low-level helpers:
 
 ```sh
 A=()
-bwrap_base A
+bwrap_base A                             # shm=tmpfs by default; use "bind" only if needed
 bwrap_lib64 A
 bwrap_gpu A
 bwrap_resolv A
@@ -96,7 +96,7 @@ bwrap_exec "${A[@]}" -- /usr/bin/app "$@"
 
 | Function | Purpose |
 |---|---|
-| `bwrap_base` | System skeleton (`/usr`, `/etc`, `/proc`, `/sys`, `/dev`, `/tmp`) |
+| `bwrap_base` | System skeleton (`/usr`, `/etc`, `/proc`, `/sys`, `/dev`, `/tmp`); `$2` selects `shm=tmpfs` (default, private) or `shm=bind` (host `/dev/shm`) |
 | `bwrap_lib64` | `/usr/lib64` bind or symlink |
 | `bwrap_resolv` | resolv.conf symlink target for DNS |
 | `bwrap_gpu` | DRI + NVIDIA device nodes |
@@ -127,7 +127,7 @@ bwrap_exec "${A[@]}" -- /usr/bin/app "$@"
 
 | Function | Purpose |
 |---|---|
-| `bwrap_gui_setup` | `bwrap_base` + `lib64` + optional `gpu` + optional `resolv` + `runtime_dir` + `home_tmpfs` |
+| `bwrap_gui_setup` | `bwrap_base` + `lib64` + optional `gpu` + optional `resolv` + `runtime_dir` + `home_tmpfs`; optional `shm` mode |
 | `bwrap_gui_finish` | `themes` + `wayland`/`x11` + D-Bus (`filtered` by default; `unfiltered`/`none` opt-out) + `env_base` + malloc + seccomp + `sandbox` |
 
 `bwrap_gui_setup` parameters:
@@ -135,6 +135,7 @@ bwrap_exec "${A[@]}" -- /usr/bin/app "$@"
 - `$1` — array name to append bwrap arguments to (required)
 - `$2` — network: `yes`/`no` (default `no`); `yes` adds the resolv.conf bind
 - `$3` — GPU: `yes`/`no` (default `no`); `yes` exposes the DRI/NVIDIA device nodes, `no` omits them. GPU exposure expands the attack surface, so it is opt-in.
+- `$4` — shm: `tmpfs` (default) or `bind`. `tmpfs` creates a private, empty `/dev/shm`; `bind` exposes the host `/dev/shm`, which shares POSIX shared memory with host processes and other sandboxes. Use `bind` only for applications that require host shm.
 
 ### D-Bus filtering
 
