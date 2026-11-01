@@ -105,6 +105,15 @@ secrets and loader/interpreter variables from the calling environment.
 - `$4` — shm: `tmpfs` (default) or `bind`. `tmpfs` creates a private, empty `/dev/shm`; `bind` exposes the host `/dev/shm`, which shares POSIX shared memory with host processes and other sandboxes. Use `bind` only for applications that require host shm.
 - `$5` — clearenv: `yes` (default) or `no`. `yes` drops the inherited environment; `no` keeps it and re-exposes host secrets and loader/interpreter variables.
 
+`bwrap_gui_finish` parameters:
+- `$1` — array name to append bwrap arguments to
+- `$2` — display: `wayland`/`x11` (default `wayland`)
+- `$3` — network: `yes`/`no` (default `no`); `yes` adds `--share-net`
+- `$4` — malloc: `default` (default, enabled), `light`, or `no` (opt-out)
+- `$5` — D-Bus mode: `filtered` (default), `unfiltered`, `none`; `filtered` returns non-zero if `xdg-dbus-proxy` is unavailable
+- `$6` — themes: `yes`/`no` (default `yes`)
+- `$7` — seccomp: `default`/`none` (default `default`); `default` returns non-zero if the filter blob is unavailable; use `bwrap_seccomp` directly for an allowlist
+
 ### D-Bus filtering
 
 `bwrap_dbus_filtered` starts an `xdg-dbus-proxy` instance with `--filter`
@@ -133,15 +142,6 @@ nothing to proxy.
 | GUI services | `org.freedesktop.Notifications`, `org.kde.StatusNotifierWatcher`, `org.freedesktop.ScreenSaver`, `org.freedesktop.login1`, `org.a11y.Bus` |
 
 Extra `--talk`/`--own` rules can be appended per-app.
-
-`bwrap_gui_finish` parameters:
-- `$1` — array name to append bwrap arguments to
-- `$2` — display: `wayland`/`x11` (default `wayland`)
-- `$3` — network: `yes`/`no` (default `no`); `yes` adds `--share-net`
-- `$4` — malloc: `default` (default, enabled), `light`, or `no` (opt-out)
-- `$5` — D-Bus mode: `filtered` (default), `unfiltered`, `none`; `filtered` returns non-zero if `xdg-dbus-proxy` is unavailable
-- `$6` — themes: `yes`/`no` (default `yes`)
-- `$7` — seccomp: `default`/`none` (default `default`); `default` returns non-zero if the filter blob is unavailable; use `bwrap_seccomp` directly for an allowlist
 
 When using filtered D-Bus, wrappers must call `bwrap_exec` instead of
 `exec bwrap` to ensure proxy cleanup.
