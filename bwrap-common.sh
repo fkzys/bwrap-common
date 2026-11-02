@@ -554,11 +554,18 @@ _bwrap_seccomp_conf() {
 
 # Internal: create/validate the persistent cache directory.
 _bwrap_seccomp_cache_ready() {
-    local _cache="$1"
-    command mkdir -p "$_cache" 2>/dev/null || return 1
+    local _cache="$1" _owner _mode _uid
+    _uid=$(id -u) || return 1
+
+    if [[ ! -e "$_cache" ]]; then
+        ( umask 077; command mkdir -p "$_cache" 2>/dev/null ) || return 1
+    fi
     [[ -d "$_cache" && -w "$_cache" ]] || return 1
-    chmod 700 "$_cache" 2>/dev/null || true
-    return 0
+
+    _owner=$(stat -c %u -- "$_cache" 2>/dev/null) || return 1
+    [[ "$_owner" == "$_uid" ]] || return 1
+    _mode=$(stat -c %a -- "$_cache" 2>/dev/null) || return 1
+    (( (8#$_mode & 0022) == 0 ))
 }
 
 _bwrap_seccomp_warn_cache() {
@@ -684,8 +691,10 @@ _bwrap_seccomp_prepare() {
 
     _cache="${BWRAP_SECCOMP_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/bwrap-common/seccomp}"
     _cache_file="${_cache}/${_hash}.bpf"
+    local _cache_ready=0
+    _bwrap_seccomp_cache_ready "$_cache" && _cache_ready=1
 
-    if [[ -f "$_cache_file" ]]; then
+    if (( _cache_ready )) && [[ -f "$_cache_file" ]]; then
         if _bwrap_seccomp_cache_valid "$_cache_file"; then
             _prep_path="$_cache_file"
             _prep_temp=0
@@ -694,7 +703,7 @@ _bwrap_seccomp_prepare() {
         echo "bwrap_seccomp: cached filter failed validation, recompiling: $_cache_file" >&2
     fi
 
-    if _bwrap_seccomp_cache_ready "$_cache"; then
+    if (( _cache_ready )); then
         if ! _tmp=$(mktemp "${_cache_file}.tmp.XXXXXX" 2>/dev/null); then
             _bwrap_seccomp_warn_cache "$_cache"
             _bwrap_seccomp_runtime_prepare "$_kind" "$_payload" _prep_path _prep_temp

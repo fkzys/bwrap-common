@@ -87,6 +87,8 @@ shell-side logic without loading a real filter into the kernel:
   and arch header but a stale sidecar is detected and recompiled
 - changing the generator `--version` changes the cache key and forces a rebuild
 - four concurrent cache writers all succeed and leave one valid checksummed entry
+- a pre-planted cache entry in a group/world-writable directory is rejected and
+  bypassed for the runtime fallback
 - default+extra appends one `--seccomp` (never `--add-seccomp-fd`), passes the
   user rules through `--extra -`, compiles once, reuses the cache, and closes
   the descriptor on cleanup

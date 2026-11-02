@@ -108,16 +108,18 @@ bwrap_exec "${A[@]}" -- /usr/bin/app "$@"
 | `BWRAP_SECCOMP_ARCH` | overrides `uname -m` (cross-arch tests) |
 
 The default filter is compiled from `seccomp/default.conf` at runtime and cached.
-Cache keys include the generator `--version`, filter mode, and architecture:
+Cache keys include the generator `--version` (including the loaded libseccomp version), filter mode, and architecture:
 
 - allowlist: `sha256("bwrap-common-seccomp-v4\n<genver>\nallowlist\n<arch>\n<spec>\n")`
 - default: `sha256("bwrap-common-seccomp-default-v4\n<genver>\nstrict\n<arch>\n<default_conf_sha256>\n")`
 - default+extra: `sha256("bwrap-common-seccomp-default-extra-v4\n<genver>\nstrict\n<arch>\n<default_conf_sha256>\n<extra_spec>\n")`
 
 Cached filters and their `.sha256` sidecars are mode `0600`; a checksum
-mismatch discards the entry and recompiles it. If the cache is unavailable, the
-filter is compiled into a temporary file in `$XDG_RUNTIME_DIR`, opened, and
-unlinked; without a writable runtime directory the call fails closed. Extra
+mismatch recompiles the entry. The cache directory must be owned by the current
+user and must not be writable by group or others; otherwise it is bypassed for
+the runtime fallback. If the cache is unavailable, the filter is compiled into a
+temporary file in `$XDG_RUNTIME_DIR`, opened, and unlinked; without a writable
+runtime directory the call fails closed. Extra
 blocklist rules can be merged into the default filter with
 `bwrap_seccomp A default "RULE"...`; `bwrap_gui_finish` still accepts only
 `default`/`none`.

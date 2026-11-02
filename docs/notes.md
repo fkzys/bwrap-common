@@ -194,7 +194,7 @@ rejects `ALLOW`.
 Rules use `seccomp/default.conf` format: base actions are `EPERM` or `ENOSYS`,
 extra rules may also use `ALLOW`, and argument conditions are supported.
 
-Cache keys include the generator `--version`, filter mode, architecture, and
+Cache keys include the generator `--version` (including the loaded libseccomp version), filter mode, architecture, and
 the content of `default.conf`, so a generator upgrade, config edit, or
 architecture switch produces a new entry:
 
@@ -204,7 +204,9 @@ architecture switch produces a new entry:
 Each cached filter has a `.sha256` sidecar; a checksum mismatch recompiles the
 entry. The sidecar is installed before the filter, and invalid entries are
 overwritten rather than removed, so concurrent writers cannot delete a fresh
-entry. The generator reports version 4. The cache is
+entry. The generator reports version 4 plus the loaded libseccomp version. The
+cache directory must be owned by the current user and must not be writable by
+group or others; otherwise it is bypassed for the runtime fallback. The cache is
 host-side and trusted; the key and checksum catch stale or corrupted outputs,
 not a malicious writer. If the cache directory is unavailable, `bwrap_seccomp`
 warns once per cache directory and compiles into a temporary file in

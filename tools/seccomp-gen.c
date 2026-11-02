@@ -752,6 +752,7 @@ int main(int argc, char **argv)
 	const char *allowlist = NULL;
 	const char *out = NULL;
 	const char *arch_name = NULL;
+	const struct scmp_version *libver;
 	int strict = 0;
 	int version = 0;
 	int opt;
@@ -790,7 +791,12 @@ int main(int argc, char **argv)
 		usage("unexpected positional argument");
 
 	if (version) {
-		puts("4");
+		libver = seccomp_version();
+		if (libver)
+			printf("4 (libseccomp %u.%u.%u)\n",
+			       libver->major, libver->minor, libver->micro);
+		else
+			puts("4");
 		return 0;
 	}
 

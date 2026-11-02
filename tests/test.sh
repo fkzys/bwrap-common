@@ -789,6 +789,27 @@ else
     fail "concurrent cache writers left rc=$CONC_RC entry=${CONC_BPF:-none}"
 fi
 
+SHARED_CACHE="${TMPDIR_TEST}/shared-cache"
+mkdir -p "$SHARED_CACHE"
+if [[ -n "$DEFAULT_CACHE_BLOB" ]]; then
+    cp "$DEFAULT_CACHE_BLOB" "$SHARED_CACHE/"
+    cp "${DEFAULT_CACHE_BLOB}.sha256" "$SHARED_CACHE/"
+fi
+chmod 777 "$SHARED_CACHE"
+SHARED_BEFORE=$(wc -c < "$GEN_COUNTER" 2>/dev/null || echo 0)
+SH=()
+BWRAP_SECCOMP_CACHE_DIR="$SHARED_CACHE" bwrap_seccomp SH default 2>"${TMPDIR_TEST}/shared-cache.err"
+SH_RC=$?
+SHARED_CALLS=$(wc -c < "$GEN_COUNTER" 2>/dev/null || echo 0)
+SHARED_ERR=$(cat "${TMPDIR_TEST}/shared-cache.err" 2>/dev/null)
+if [[ $SH_RC -eq 0 && ${#SH[@]} -eq 2 &&
+      "$SHARED_CALLS" -gt "$SHARED_BEFORE" &&
+      "$SHARED_ERR" == *"seccomp cache unavailable"* ]]; then
+    ok "shared cache directory is rejected and bypassed"
+else
+    fail "shared cache was used (rc=$SH_RC calls=$SHARED_BEFORE/$SHARED_CALLS)"
+fi
+
 SECCOMP_FD="${SB[1]:-}"
 SECCOMP_FD2="${SB2[1]:-}"
 SECCOMP_FD3="${SB3[1]:-}"
