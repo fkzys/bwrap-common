@@ -146,11 +146,46 @@ write_fake_blob() {
 
 SECCOMP_FIXTURE_DIR="${TMPDIR_TEST}/seccomp"
 mkdir -p "$SECCOMP_FIXTURE_DIR"
-SECCOMP_FIXTURE_BLOB="${SECCOMP_FIXTURE_DIR}/default.${SECCOMP_ARCH}.bpf"
+SECCOMP_FIXTURE_CONF="${SECCOMP_FIXTURE_DIR}/default.conf"
+printf '# bwrap-common test fixture\n' > "$SECCOMP_FIXTURE_CONF"
+SECCOMP_FIXTURE_BLOB="${TMPDIR_TEST}/default.bpf"
 write_fake_blob "$SECCOMP_FIXTURE_BLOB" "$SECCOMP_MAGIC"
+
+FAKE_GEN="${TMPDIR_TEST}/fake-seccomp-gen"
+GEN_COUNTER="${TMPDIR_TEST}/gen-count"
+cat > "$FAKE_GEN" <<'GEN'
+#!/usr/bin/env bash
+set -u
+printf 'x' >> "${FAKE_GEN_COUNTER:?}"
+_out=""
+_extra=""
+while (($#)); do
+    case "$1" in
+        -o) _out=$2; shift 2 ;;
+        --extra) _extra=$2; shift 2 ;;
+        --allowlist|--blocklist|--arch) shift 2 ;;
+        --strict) shift ;;
+        *) shift ;;
+    esac
+done
+if [[ -n "${FAKE_GEN_EXTRA_COPY:-}" && -n "$_extra" ]]; then
+    cp "$_extra" "$FAKE_GEN_EXTRA_COPY"
+fi
+[[ -n "$_out" ]] || exit 1
+cp "${FAKE_GEN_BLOB:?}" "$_out"
+GEN
+chmod +x "$FAKE_GEN"
+
+export XDG_RUNTIME_DIR="${TMPDIR_TEST}/runtime"
+mkdir -p "$XDG_RUNTIME_DIR"
+chmod 700 "$XDG_RUNTIME_DIR"
 
 export BWRAP_SECCOMP_DIR="$SECCOMP_FIXTURE_DIR"
 export BWRAP_SECCOMP_CACHE_DIR="${TMPDIR_TEST}/seccomp-cache"
+export BWRAP_SECCOMP_GEN="$FAKE_GEN"
+export FAKE_GEN_COUNTER="$GEN_COUNTER"
+export FAKE_GEN_BLOB="$SECCOMP_FIXTURE_BLOB"
+unset BWRAP_SECCOMP_CONF 2>/dev/null || true
 
 # ── Guard re-source ─────────────────────────────────────────
 
@@ -628,14 +663,14 @@ has_arg SP "--seccomp" && fail "rejected allowlist appended --seccomp" || ok "re
 SNM=()
 BWRAP_SECCOMP_DIR="${TMPDIR_TEST}/missing" bwrap_gui_finish SNM wayland no no unfiltered no default 2>/dev/null
 SNM_RC=$?
-[[ $SNM_RC -eq 1 ]] && ok "seccomp=default fails when the blob is missing" || fail "missing seccomp blob returned $SNM_RC"
+[[ $SNM_RC -eq 1 ]] && ok "seccomp=default fails when the config is missing" || fail "missing seccomp config returned $SNM_RC"
 has_arg SNM "--seccomp" && fail "failed seccomp setup appended --seccomp" || ok "failed seccomp setup appends nothing"
 
 SOM=()
 BWRAP_SECCOMP_DIR="${TMPDIR_TEST}/missing" bwrap_gui_finish SOM wayland no no unfiltered no none 2>/dev/null
 SOM_RC=$?
-[[ $SOM_RC -eq 0 ]] && ok "seccomp=none ignores a missing blob" || fail "seccomp=none returned $SOM_RC"
-has_arg SOM "--seccomp" && fail "seccomp=none appended --seccomp" || ok "seccomp=none appends nothing when the blob is missing"
+[[ $SOM_RC -eq 0 ]] && ok "seccomp=none ignores a missing config" || fail "seccomp=none returned $SOM_RC"
+has_arg SOM "--seccomp" && fail "seccomp=none appended --seccomp" || ok "seccomp=none appends nothing when the config is missing"
 
 # ── bwrap_seccomp ───────────────────────────────────────────
 
@@ -647,6 +682,7 @@ SA_RC=$?
 [[ $SA_RC -eq 0 ]] && ok "none returns 0" || fail "none returned $SA_RC"
 [[ ${#SA[@]} -eq 0 ]] && ok "none appends nothing" || fail "none appended ${SA[*]}"
 
+rm -rf "$BWRAP_SECCOMP_CACHE_DIR" "$GEN_COUNTER"
 SB=()
 bwrap_seccomp SB default
 SB_RC=$?
@@ -656,10 +692,24 @@ if [[ ${#SB[@]} -eq 2 && "${SB[0]}" == "--seccomp" && "${SB[1]}" =~ ^[0-9]+$ ]];
 else
     fail "default output was: ${SB[*]}"
 fi
+
+SB2=()
+bwrap_seccomp SB2 default
+SB2_RC=$?
+GEN_CALLS=$(wc -c < "$GEN_COUNTER" 2>/dev/null || echo 0)
+if [[ $SB2_RC -eq 0 && "$GEN_CALLS" -eq 1 ]]; then
+    ok "default compiles once and reuses the cache"
+else
+    fail "default cache rc=$SB2_RC generator_calls=$GEN_CALLS"
+fi
+
 SECCOMP_FD="${SB[1]:-}"
+SECCOMP_FD2="${SB2[1]:-}"
 _bwrap_seccomp_close_fds
 if [[ -n "$SECCOMP_FD" ]] && { : <&"$SECCOMP_FD"; } 2>/dev/null; then
     fail "seccomp filter fd was left open"
+elif [[ -n "$SECCOMP_FD2" ]] && { : <&"$SECCOMP_FD2"; } 2>/dev/null; then
+    fail "cached seccomp filter fd was left open"
 else
     ok "seccomp filter fd is closed by cleanup"
 fi
@@ -683,50 +733,37 @@ fi
 SC=()
 BWRAP_SECCOMP_DIR="${TMPDIR_TEST}/missing" bwrap_seccomp SC default 2>/dev/null
 SC_RC=$?
-[[ $SC_RC -eq 1 ]] && ok "missing default fails closed" || fail "missing default returned $SC_RC"
-[[ ${#SC[@]} -eq 0 ]] && ok "missing default appends nothing" || fail "missing default appended ${SC[*]}"
+[[ $SC_RC -eq 1 ]] && ok "missing default config fails closed" || fail "missing default config returned $SC_RC"
+[[ ${#SC[@]} -eq 0 ]] && ok "missing default config appends nothing" || fail "missing default config appended ${SC[*]}"
 
 BAD_SIZE_DIR="${TMPDIR_TEST}/bad-size"
 mkdir -p "$BAD_SIZE_DIR"
-head -c 12 /dev/zero > "${BAD_SIZE_DIR}/default.${SECCOMP_ARCH}.bpf"
+head -c 12 /dev/zero > "${BAD_SIZE_DIR}/bad.bpf"
 SE=()
-BWRAP_SECCOMP_DIR="$BAD_SIZE_DIR" bwrap_seccomp SE default 2>/dev/null
+BWRAP_SECCOMP_CACHE_DIR="${TMPDIR_TEST}/cache-bad-size" \
+BWRAP_SECCOMP_CONF="$SECCOMP_FIXTURE_CONF" \
+FAKE_GEN_BLOB="${BAD_SIZE_DIR}/bad.bpf" \
+bwrap_seccomp SE default 2>/dev/null
 SE_RC=$?
 [[ $SE_RC -eq 1 && ${#SE[@]} -eq 0 ]] && ok "invalid size fails closed" || fail "invalid size returned $SE_RC"
 
 if [[ "$SECCOMP_MAGIC" != "00000000" ]]; then
     BAD_ARCH_DIR="${TMPDIR_TEST}/bad-arch"
     mkdir -p "$BAD_ARCH_DIR"
-    write_fake_blob "${BAD_ARCH_DIR}/default.${SECCOMP_ARCH}.bpf" "deadbeef"
+    write_fake_blob "${BAD_ARCH_DIR}/bad.bpf" "deadbeef"
     SG=()
-    BWRAP_SECCOMP_DIR="$BAD_ARCH_DIR" bwrap_seccomp SG default 2>/dev/null
+    BWRAP_SECCOMP_CACHE_DIR="${TMPDIR_TEST}/cache-bad-arch" \
+    BWRAP_SECCOMP_CONF="$SECCOMP_FIXTURE_CONF" \
+    FAKE_GEN_BLOB="${BAD_ARCH_DIR}/bad.bpf" \
+    bwrap_seccomp SG default 2>/dev/null
     SG_RC=$?
     [[ $SG_RC -eq 1 && ${#SG[@]} -eq 0 ]] && ok "arch mismatch fails closed" || fail "arch mismatch returned $SG_RC"
 else
     ok "arch mismatch test skipped (unknown host arch)"
 fi
 
-FAKE_GEN="${TMPDIR_TEST}/fake-seccomp-gen"
-GEN_COUNTER="${TMPDIR_TEST}/gen-count"
-cat > "$FAKE_GEN" <<'GEN'
-#!/usr/bin/env bash
-printf 'x' >> "${FAKE_GEN_COUNTER:?}"
-_out=""
-while (($#)); do
-    case "$1" in
-        -o) _out=$2; shift 2 ;;
-        --allowlist) shift 2 ;;
-        *) shift ;;
-    esac
-done
-cp "${FAKE_GEN_BLOB:?}" "$_out"
-GEN
-chmod +x "$FAKE_GEN"
-
-export FAKE_GEN_COUNTER="$GEN_COUNTER"
-export FAKE_GEN_BLOB="$SECCOMP_FIXTURE_BLOB"
-export BWRAP_SECCOMP_GEN="$FAKE_GEN"
 rm -rf "$BWRAP_SECCOMP_CACHE_DIR" "$GEN_COUNTER"
+unset FAKE_GEN_EXTRA_COPY 2>/dev/null || true
 
 SI=()
 bwrap_seccomp SI "openat read"
@@ -772,7 +809,98 @@ bwrap_seccomp SM default 2>/dev/null
 SM_RC=$?
 [[ $SM_RC -eq 1 && ${#SM[@]} -eq 2 ]] && ok "existing --seccomp is rejected" || fail "duplicate --seccomp returned $SM_RC"
 
-unset BWRAP_SECCOMP_GEN FAKE_GEN_COUNTER FAKE_GEN_BLOB
+DT=()
+DT_EXTRA="${TMPDIR_TEST}/extra-rules"
+rm -rf "$BWRAP_SECCOMP_CACHE_DIR" "$GEN_COUNTER" "$DT_EXTRA"
+FAKE_GEN_EXTRA_COPY="$DT_EXTRA" bwrap_seccomp DT default "getppid EPERM" 2>/dev/null
+DT_RC=$?
+if [[ $DT_RC -eq 0 && ${#DT[@]} -eq 2 &&
+      "${DT[0]}" == "--seccomp" && "${DT[1]}" =~ ^[0-9]+$ ]]; then
+    ok "default+extra appends one --seccomp <fd>"
+else
+    fail "default+extra output was rc=$DT_RC: ${DT[*]}"
+fi
+has_arg DT "--add-seccomp-fd" && fail "default+extra used --add-seccomp-fd" || ok "default+extra avoids --add-seccomp-fd"
+if [[ -f "$DT_EXTRA" ]] && grep -qxF "getppid EPERM" "$DT_EXTRA"; then
+    ok "default+extra passes user rules via --extra"
+else
+    fail "default+extra did not pass the extra rules file"
+fi
+GEN_CALLS=$(wc -c < "$GEN_COUNTER" 2>/dev/null || echo 0)
+if [[ "$GEN_CALLS" -eq 1 ]]; then
+    ok "default+extra compiles once"
+else
+    fail "default+extra generator_calls=$GEN_CALLS"
+fi
+
+DT2=()
+FAKE_GEN_EXTRA_COPY="$DT_EXTRA" bwrap_seccomp DT2 default "getppid EPERM" 2>/dev/null
+DT2_RC=$?
+GEN_CALLS=$(wc -c < "$GEN_COUNTER" 2>/dev/null || echo 0)
+if [[ $DT2_RC -eq 0 && ${#DT2[@]} -eq 2 && "$GEN_CALLS" -eq 1 ]]; then
+    ok "default+extra reuses the cache"
+else
+    fail "default+extra cache rc=$DT2_RC generator_calls=$GEN_CALLS"
+fi
+
+DT_FD="${DT[1]:-}"
+DT2_FD="${DT2[1]:-}"
+_bwrap_seccomp_close_fds
+if [[ -n "$DT_FD" ]] && { : <&"$DT_FD"; } 2>/dev/null; then
+    fail "default+extra left the filter fd open"
+elif [[ -n "$DT2_FD" ]] && { : <&"$DT2_FD"; } 2>/dev/null; then
+    fail "cached default+extra left the filter fd open"
+else
+    ok "default+extra closes filter fds"
+fi
+
+DE=()
+bwrap_seccomp DE default "" 2>/dev/null
+DE_RC=$?
+[[ $DE_RC -eq 1 && ${#DE[@]} -eq 0 ]] && ok "empty extra blocklist fails closed" || fail "empty extra blocklist returned $DE_RC"
+
+DTF=()
+BWRAP_SECCOMP_GEN="$FAIL_GEN" bwrap_seccomp DTF default "kexec_load ENOSYS" 2>/dev/null
+DTF_RC=$?
+[[ $DTF_RC -eq 1 && ${#DTF[@]} -eq 0 ]] && ok "extra blocklist compile failure fails closed" || fail "extra compile failure returned $DTF_RC"
+
+DM=(--seccomp 3)
+bwrap_seccomp DM default "getppid EPERM" 2>/dev/null
+DM_RC=$?
+[[ $DM_RC -eq 1 && ${#DM[@]} -eq 2 ]] && ok "default+extra rejects an existing --seccomp" || fail "default+extra duplicate returned $DM_RC"
+
+DMF=(--add-seccomp-fd 3)
+bwrap_seccomp DMF default "getppid EPERM" 2>/dev/null
+DMF_RC=$?
+[[ $DMF_RC -eq 1 && ${#DMF[@]} -eq 2 ]] && ok "default+extra rejects an existing --add-seccomp-fd" || fail "default+extra add-seccomp-fd duplicate returned $DMF_RC"
+
+BAD_CACHE_FILE="${TMPDIR_TEST}/cache-parent-is-file"
+: > "$BAD_CACHE_FILE"
+RUNTIME_FALLBACK="${TMPDIR_TEST}/runtime-fallback"
+mkdir -p "$RUNTIME_FALLBACK"
+chmod 700 "$RUNTIME_FALLBACK"
+DF=()
+BWRAP_SECCOMP_CACHE_DIR="${BAD_CACHE_FILE}/cache" \
+XDG_RUNTIME_DIR="$RUNTIME_FALLBACK" \
+bwrap_seccomp DF default "getppid EPERM" 2>"${TMPDIR_TEST}/fallback.err"
+DF_RC=$?
+DF_ERR=$(cat "${TMPDIR_TEST}/fallback.err" 2>/dev/null)
+if [[ $DF_RC -eq 0 && ${#DF[@]} -eq 2 && "${DF[0]}" == "--seccomp" ]]; then
+    ok "unavailable cache falls back to runtime tmpfs"
+else
+    fail "cache fallback returned $DF_RC: ${DF[*]}"
+fi
+if [[ "$DF_ERR" == *"seccomp cache unavailable"* && "$DF_ERR" == *"tmpfs fallback"* ]]; then
+    ok "cache fallback warns on stderr"
+else
+    fail "cache fallback warning was: $DF_ERR"
+fi
+if [[ -z "$(find "$RUNTIME_FALLBACK" -maxdepth 1 -name 'bwrap-seccomp.*' -print -quit)" ]]; then
+    ok "runtime fallback unlinks its temporary filter"
+else
+    fail "runtime fallback left a temporary filter"
+fi
+_bwrap_seccomp_close_fds
 
 # ── seccomp architecture mapping ────────────────────────────
 
@@ -792,11 +920,14 @@ else
     ok "unknown arch mapping is rejected"
 fi
 
-S390_DIR="${TMPDIR_TEST}/seccomp-s390x"
-mkdir -p "$S390_DIR"
-write_fake_blob "${S390_DIR}/default.s390x.bpf" "80000016"
+S390_BLOB="${TMPDIR_TEST}/s390x.bpf"
+write_fake_blob "$S390_BLOB" "80000016"
 S390=()
-BWRAP_SECCOMP_ARCH=s390x BWRAP_SECCOMP_DIR="$S390_DIR" bwrap_seccomp S390 default
+BWRAP_SECCOMP_ARCH=s390x \
+BWRAP_SECCOMP_CACHE_DIR="${TMPDIR_TEST}/cache-s390x" \
+BWRAP_SECCOMP_CONF="$SECCOMP_FIXTURE_CONF" \
+FAKE_GEN_BLOB="$S390_BLOB" \
+bwrap_seccomp S390 default
 S390_RC=$?
 if [[ $S390_RC -eq 0 && ${#S390[@]} -eq 2 && "${S390[0]}" == "--seccomp" ]]; then
     ok "s390x big-endian fixture is accepted"
@@ -805,23 +936,31 @@ else
 fi
 _bwrap_seccomp_close_fds
 
-write_fake_blob "${S390_DIR}/default.s390x.bpf" "16000080"
+S390_BAD_BLOB="${TMPDIR_TEST}/s390x-wrong-endian.bpf"
+write_fake_blob "$S390_BAD_BLOB" "16000080"
 S390BAD=()
-BWRAP_SECCOMP_ARCH=s390x BWRAP_SECCOMP_DIR="$S390_DIR" bwrap_seccomp S390BAD default 2>/dev/null
+BWRAP_SECCOMP_ARCH=s390x \
+BWRAP_SECCOMP_CACHE_DIR="${TMPDIR_TEST}/cache-s390x-bad" \
+BWRAP_SECCOMP_CONF="$SECCOMP_FIXTURE_CONF" \
+FAKE_GEN_BLOB="$S390_BAD_BLOB" \
+bwrap_seccomp S390BAD default 2>/dev/null
 S390BAD_RC=$?
 [[ $S390BAD_RC -eq 1 && ${#S390BAD[@]} -eq 0 ]] \
     && ok "s390x little-endian fixture is rejected" \
     || fail "s390x wrong-endian fixture returned $S390BAD_RC"
 
-UNKNOWN_DIR="${TMPDIR_TEST}/seccomp-unknown"
-mkdir -p "$UNKNOWN_DIR"
-write_fake_blob "${UNKNOWN_DIR}/default.weird.bpf" "3e0000c0"
 SU=()
-BWRAP_SECCOMP_ARCH=weird BWRAP_SECCOMP_DIR="$UNKNOWN_DIR" bwrap_seccomp SU default 2>/dev/null
+BWRAP_SECCOMP_ARCH=weird \
+BWRAP_SECCOMP_CACHE_DIR="${TMPDIR_TEST}/cache-unknown" \
+BWRAP_SECCOMP_CONF="$SECCOMP_FIXTURE_CONF" \
+FAKE_GEN_BLOB="$SECCOMP_FIXTURE_BLOB" \
+bwrap_seccomp SU default 2>/dev/null
 SU_RC=$?
 [[ $SU_RC -eq 1 && ${#SU[@]} -eq 0 ]] \
     && ok "unknown architecture fails closed" \
     || fail "unknown architecture returned $SU_RC"
+
+unset BWRAP_SECCOMP_GEN FAKE_GEN_COUNTER FAKE_GEN_BLOB
 
 # ── bwrap_ssh_agent ─────────────────────────────────────────
 

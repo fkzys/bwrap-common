@@ -4,8 +4,8 @@
 
 | File | Language | Framework | What it tests |
 |------|----------|-----------|---------------|
-| `tests/test.sh` | Bash | Custom assertions | Source guard (re-source idempotency), function definitions (all 28 public functions exist), VERSION variable, `bwrap_base` (non-empty output, `--clearenv` first by default, explicit `--setenv` preserved, idempotent repeated calls, opt-out and invalid mode handling, `--ro-bind /usr`, `--proc /proc`, `--tmpfs /tmp`, default private `/dev/shm` tmpfs, opt-in host `/dev/shm` bind, invalid shm mode rejection), `bwrap_home_tmpfs` (`--tmpfs $HOME`, `--dir ~/.config`), `bwrap_env_base` (HOME/PATH/TERM/XDG_RUNTIME_DIR env vars; XDG_CACHE_HOME normalized to private `$HOME/.cache`), `bwrap_sandbox` (`--unshare-all`, `--die-with-parent`, `--new-session`, network/new-session toggles), `bwrap_hardened_malloc` (omitted/default and light variants succeed when present and fail when missing; omitted defaults to full `default`), `bwrap_no_hardened_malloc` (stub `/usr/lib/libhardened_malloc.so.empty` bound over both hardened_malloc variants when installed), `bwrap_runtime_dir` (XDG_RUNTIME_DIR directory creation), `bwrap_gpu`/`bwrap_lib64` (no-error execution, non-empty output), `bwrap_bind_dir` (directory creation, `--bind` flags, multiple dirs), `bwrap_ro_bind_dir` (existing dir bound, nonexistent dir skipped), `require_dir` (existing dir passes, missing dir fails), `bwrap_fcitx` (QT_IM_MODULE/XMODIFIERS env vars), `bwrap_gui_setup` (composite: base + home_tmpfs, with/without network, GPU toggle, shm and clearenv passthrough, exact composition), `bwrap_gui_finish` (composite: sandbox flags, `--clearenv` before explicit `--setenv`, malloc=no variant, dbus modes with filtered default, seccomp default/none/rejection), `bwrap_seccomp` (none/default, missing/invalid/arch-mismatched blobs fail closed, allowlist compile+cache, filter fd cleanup, fail-closed errors, duplicate `--seccomp`), `bwrap_ssh_agent` (empty without SSH_AUTH_SOCK), `bwrap_dbus_system` (no-error execution), `bwrap_exec` (exec vs. proxy branch selection, exact argument forwarding, exit-status propagation, D-Bus proxy cleanup, stdin inheritance — regression test for commit d308327) |
-| `tests/seccomp-check.sh` | Bash + embedded C | Self-contained probe | Builds the default blocklist, runs an embedded C probe in a real `bwrap --unshare-all` sandbox, invokes every rule from `seccomp/default.conf`, checks `EPERM`/`ENOSYS`, verifies argument conditions (`clone`, `ioctl`, `personality`), and fails if a config rule has no test or the filter is inactive |
+| `tests/test.sh` | Bash | Custom assertions | Source guard (re-source idempotency), function definitions (all 28 public functions exist), VERSION variable, `bwrap_base` (non-empty output, `--clearenv` first by default, explicit `--setenv` preserved, idempotent repeated calls, opt-out and invalid mode handling, `--ro-bind /usr`, `--proc /proc`, `--tmpfs /tmp`, default private `/dev/shm` tmpfs, opt-in host `/dev/shm` bind, invalid shm mode rejection), `bwrap_home_tmpfs` (`--tmpfs $HOME`, `--dir ~/.config`), `bwrap_env_base` (HOME/PATH/TERM/XDG_RUNTIME_DIR env vars; XDG_CACHE_HOME normalized to private `$HOME/.cache`), `bwrap_sandbox` (`--unshare-all`, `--die-with-parent`, `--new-session`, network/new-session toggles), `bwrap_hardened_malloc` (omitted/default and light variants succeed when present and fail when missing; omitted defaults to full `default`), `bwrap_no_hardened_malloc` (stub `/usr/lib/libhardened_malloc.so.empty` bound over both hardened_malloc variants when installed), `bwrap_runtime_dir` (XDG_RUNTIME_DIR directory creation), `bwrap_gpu`/`bwrap_lib64` (no-error execution, non-empty output), `bwrap_bind_dir` (directory creation, `--bind` flags, multiple dirs), `bwrap_ro_bind_dir` (existing dir bound, nonexistent dir skipped), `require_dir` (existing dir passes, missing dir fails), `bwrap_fcitx` (QT_IM_MODULE/XMODIFIERS env vars), `bwrap_gui_setup` (composite: base + home_tmpfs, with/without network, GPU toggle, shm and clearenv passthrough, exact composition), `bwrap_gui_finish` (composite: sandbox flags, `--clearenv` before explicit `--setenv`, malloc=no variant, dbus modes with filtered default, seccomp default/none/rejection), `bwrap_seccomp` (none/default, default+extra in one combined filter, missing/invalid/arch-mismatched filters fail closed, cache hit/miss and tmpfs fallback, allowlist compile+cache, filter fd cleanup, fail-closed errors, duplicate filters), `bwrap_ssh_agent` (empty without SSH_AUTH_SOCK), `bwrap_dbus_system` (no-error execution), `bwrap_exec` (exec vs. proxy branch selection, exact argument forwarding, exit-status propagation, D-Bus proxy cleanup, stdin inheritance — regression test for commit d308327) |
+| `tests/seccomp-check.sh` | Bash + embedded C | Self-contained probe | Builds `bwrap-seccomp-gen`, compiles `seccomp/default.conf` at runtime, runs an embedded C probe in a real `bwrap --unshare-all` sandbox, invokes every rule from `seccomp/default.conf`, checks `EPERM`/`ENOSYS`, verifies argument conditions (`clone`, `ioctl`, `personality`), and fails if a config rule has no test or the filter is inactive |
 | `tests/arch-table-check.sh` | Bash + `bwrap-seccomp-gen` | Generator/table cross-check | Generates a minimal BPF blob with `--arch` for each known architecture and compares header bytes 12–15 with `_bwrap_seccomp_arch_magic()`; architectures that libseccomp cannot cross-add are reported as `SKIP` |
 
 ## Running
@@ -67,26 +67,38 @@ Each function is called with a fresh empty array, then the array contents are in
 ### Composite function tests
 
 - **`bwrap_gui_setup`**: calls `bwrap_base` + `bwrap_lib64` + optional `bwrap_gpu` + optional `bwrap_resolv` + `bwrap_runtime_dir` + `bwrap_home_tmpfs` internally; `bwrap_gpu` is only called when the GPU argument is `yes` (default `no`). The default shm mode is `tmpfs`; `shm=bind` is forwarded to `bwrap_base`, and an invalid shm mode returns non-zero with the `bwrap_gui_setup` message. Environment clearing is on by default; `clearenv=no` omits `--clearenv`, and an invalid value is rejected with the `bwrap_gui_setup` message. The tests compare the generated argument array against the expected composition rebuilt from the same helpers: the default GPU argument matches an explicit `gpu=no` call, `gpu=yes` equals `base+lib64+gpu+runtime_dir+home_tmpfs`, `gpu=no` equals that composition with no GPU resource at all, and the network toggle is independent of it — `net=yes` adds the resolv bind while `net=no` omits it. The combined `net=yes gpu=yes` call is checked as well and must equal `base+lib64+gpu+resolv+runtime_dir+home_tmpfs`. Because the expectation is rebuilt from the helpers rather than from a fixed list of device paths, the assertions hold on hosts with and without GPU devices and catch any resource `bwrap_gpu` may expose in the future; only the resolv checks are skipped when `/etc/resolv.conf` is not a symlink.
-- **`bwrap_gui_finish`**: calls themes + display + dbus + env + malloc + seccomp + sandbox internally; tests verify that `--clearenv` from `bwrap_base` stays first and explicit `--setenv HOME` survives, `--unshare-all` presence, the default hardened_malloc path (enabled, or failure when the selected library is missing), the `malloc=no` hardened_malloc stub (skipped when not installed), and the 7th seccomp parameter: `default` appends `--seccomp`, `none` omits it, and an allowlist spec is rejected with a non-zero status. They also verify that `seccomp=default` fails when the blob is missing while `seccomp=none` still succeeds, that `dbus=filtered` (including the omitted-mode default) fails without `xdg-dbus-proxy`, and that `dbus=none`/`unfiltered` do not require the proxy
+- **`bwrap_gui_finish`**: calls themes + display + dbus + env + malloc + seccomp + sandbox internally; tests verify that `--clearenv` from `bwrap_base` stays first and explicit `--setenv HOME` survives, `--unshare-all` presence, the default hardened_malloc path (enabled, or failure when the selected library is missing), the `malloc=no` hardened_malloc stub (skipped when not installed), and the 7th seccomp parameter: `default` appends `--seccomp`, `none` omits it, and an allowlist spec is rejected with a non-zero status. They also verify that `seccomp=default` fails when the config is missing while `seccomp=none` still succeeds, that `dbus=filtered` (including the omitted-mode default) fails without `xdg-dbus-proxy`, and that `dbus=none`/`unfiltered` do not require the proxy
 
 ### Seccomp filter tests
 
-The test harness builds a 16-byte fake cBPF blob whose bytes 12–15 match the
-host architecture magic, points `BWRAP_SECCOMP_DIR` at it, and exercises the
-shell-side logic without loading a real filter into the kernel:
+The test harness creates a `default.conf` fixture, a 16-byte fake cBPF blob whose
+bytes 12–15 match the host architecture magic, and a fake generator that copies
+the blob to `-o` and records the `--extra` file. `BWRAP_SECCOMP_DIR` points at
+the fixture directory; `BWRAP_SECCOMP_CACHE_DIR` and `XDG_RUNTIME_DIR` are
+temporary. This exercises the shell-side logic without loading a real filter
+into the kernel:
 
 - `bwrap_seccomp A none` appends nothing and returns 0
-- `bwrap_seccomp A default` appends `--seccomp <numeric fd>` for a valid blob
-- a missing blob, a wrong-size blob, or a wrong-arch blob fails closed and
-  appends nothing
+- `bwrap_seccomp A default` appends one `--seccomp <numeric fd>`, compiles once,
+  and reuses the cache on the next call
+- a missing config, a wrong-size filter output, or a wrong-arch filter output
+  fails closed and appends nothing
+- default+extra appends one `--seccomp` (never `--add-seccomp-fd`), passes the
+  user rules through `--extra`, compiles once, reuses the cache, and closes the
+  descriptor on cleanup
+- an empty extra blocklist, an extra compile failure, and a pre-existing
+  `--seccomp` or `--add-seccomp-fd` argument all fail closed and leave the
+  array unchanged
+- an unavailable cache warns and falls back to a temporary filter in
+  `XDG_RUNTIME_DIR`; the temporary file is unlinked immediately
 - architecture magic is checked in native byte order: a synthetic s390x
-  big-endian blob (`80000016`) is accepted, the old little-endian value is
+  big-endian filter (`80000016`) is accepted, the old little-endian value is
   rejected, and mips/mips64/parisc/ppc64 mappings are covered
 - an unknown architecture fails closed instead of silently skipping the check
 - an unsupported host architecture aborts the suite instead of silently
   substituting x86_64; `BWRAP_SECCOMP_ARCH` is only an explicit cross-arch
   test override
-- an allowlist compiles through a fake generator once and then reuses the
+- an allowlist compiles through the fake generator once and then reuses the
   cache; the cached file is mode `0600`
 - an empty allowlist, a failing generator, and a pre-existing `--seccomp`
   argument all fail closed and leave no temporary files
@@ -118,17 +130,20 @@ generated blob.
 ### Seccomp end-to-end check (`seccomp-check.sh`)
 
 `tests/seccomp-check.sh` verifies the compiled default filter against the real
-kernel. It builds `build/bwrap-seccomp-gen` and
-`build/seccomp/default.<arch>.bpf`, compiles an embedded C probe (static with a
-dynamic fallback), and runs it under `bwrap --unshare-all` with the default
-`--seccomp` blob. Each rule in `seccomp/default.conf` is invoked and must return
+kernel. It builds `build/bwrap-seccomp-gen`, compiles `seccomp/default.conf` at
+runtime into a temporary cache, compiles an embedded C probe (static with a
+dynamic fallback), and runs it under `bwrap --unshare-all` with the resulting
+`--seccomp` descriptor. Each rule in `seccomp/default.conf` is invoked and must return
 the configured errno; the probe also checks the argument-conditioned rules
 (`clone` with `CLONE_NEWUSER` vs. `SIGCHLD`, `ioctl` `TIOCSTI`/`TIOCLINUX` vs.
 `FIONREAD`, high-bit `ioctl` command aliases, `personality` other execution
-domains vs. `PER_LINUX`/`PER_LINUX32`). A canary aborts
-before any blocked syscall if the filter is not active, and the script fails if
-a rule has no corresponding test. It requires `bwrap`, the `libseccomp`
-headers, `cc`, and `make`.
+domains vs. `PER_LINUX`/`PER_LINUX32`). It also builds one `default + extra`
+filter with `ptrace ALLOW`, `personality ALLOW a0 == 1`, and `getppid EPERM`,
+then checks that the user rules replace the matching defaults while an
+unrelated `personality` condition remains blocked. A canary aborts before any
+blocked syscall if the filter is not active, and the script fails if a rule has
+no corresponding test. It requires `bwrap`, the `libseccomp` headers, `cc`, and
+`make`.
 
 ### Process execution tests (`bwrap_exec`)
 
@@ -151,7 +166,7 @@ The GitHub Actions workflow (`.github/workflows/ci.yml`) runs on push/PR when `b
 - Bash tests create a temporary directory (`mktemp -d`) cleaned up via `trap EXIT`
 - No root privileges required
 - The unit tests do not launch real bubblewrap sandboxes — argument-building tests only inspect generated arrays, and `bwrap_exec` is exercised through a fake `bwrap` placed first in `PATH`
-- `tests/test.sh` seccomp tests use fake cBPF blobs and a fake generator; no real seccomp filter is loaded into that test process
+- `tests/test.sh` seccomp tests use a fake `default.conf`, fake cBPF blobs, and a fake generator; no real seccomp filter is loaded into that test process
 - `tests/seccomp-check.sh` does launch a real `bwrap` sandbox and loads the compiled default filter; it needs `bwrap`, `libseccomp-dev`, `cc`, and `make`
 - No system files are modified; `bwrap_bind_dir` creates directories only inside the temporary directory
 - Functions that check for optional system resources (GPU devices, Wayland socket, PipeWire, D-Bus, SSH agent) produce empty or minimal output when those resources are absent

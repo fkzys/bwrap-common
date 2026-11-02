@@ -14,21 +14,33 @@
 set -euo pipefail
 
 _root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
-_conf="$_root/seccomp/default.conf"
+if [[ -n "${BWRAP_SECCOMP_CONF:-}" ]]; then
+    _conf="$BWRAP_SECCOMP_CONF"
+elif [[ -n "${BWRAP_SECCOMP_DIR:-}" ]]; then
+    _conf="${BWRAP_SECCOMP_DIR}/default.conf"
+else
+    _conf="$_root/seccomp/default.conf"
+fi
 
 if [[ ! -f "$_conf" ]]; then
     echo "seccomp-check: missing $_conf" >&2
     exit 1
 fi
 
-if [[ -z "${BWRAP_SECCOMP_DIR:-}" ]]; then
-    make -C "$_root" ARCH="$(uname -m)" build
-    BWRAP_SECCOMP_DIR="$_root/build/seccomp"
+if [[ -z "${BWRAP_SECCOMP_GEN:-}" ]]; then
+    make -C "$_root" build
+    BWRAP_SECCOMP_GEN="$_root/build/bwrap-seccomp-gen"
 fi
-export BWRAP_SECCOMP_DIR
+if [[ -z "${BWRAP_SECCOMP_CONF:-}" && -z "${BWRAP_SECCOMP_DIR:-}" ]]; then
+    BWRAP_SECCOMP_CONF="$_conf"
+fi
+export BWRAP_SECCOMP_GEN
+[[ -n "${BWRAP_SECCOMP_CONF:-}" ]] && export BWRAP_SECCOMP_CONF
+[[ -n "${BWRAP_SECCOMP_DIR:-}" ]] && export BWRAP_SECCOMP_DIR
 
 _tmp=$(mktemp -d "${TMPDIR:-/tmp}/seccomp-check.XXXXXX")
 trap 'rm -rf "$_tmp"' EXIT
+export BWRAP_SECCOMP_CACHE_DIR="${BWRAP_SECCOMP_CACHE_DIR:-$_tmp/cache}"
 
 cat >"$_tmp/probe.c" <<'PROBE'
 #define _GNU_SOURCE
@@ -824,10 +836,102 @@ for _rule in "${_rules[@]}"; do
     fi
 done
 
+if (( _fail == 0 )); then
+    cat >"$_tmp/extra-probe.c" <<'EXTRA'
+#define _GNU_SOURCE
+
+#include <errno.h>
+#include <stdio.h>
+#include <string.h>
+#include <sys/ptrace.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+
+static int failures;
+
+static void report(const char *name, long rc, int err, int want_errno)
+{
+	int ok;
+
+	if (want_errno)
+		ok = rc == -1 && err == want_errno;
+	else
+		ok = !(rc == -1 && err == EPERM);
+
+	printf("%s %s want=%s got=%s\n", ok ? "PASS" : "FAIL", name,
+	       want_errno ? strerror(want_errno) : "allow",
+	       rc == -1 ? strerror(err) : "success");
+	if (!ok)
+		failures++;
+}
+
+int main(void)
+{
+	long rc;
+	int err;
+
+	errno = 0;
+	rc = syscall(SYS_ptrace, (long)PTRACE_TRACEME, 0, NULL, NULL);
+	err = errno;
+	report("extra:ptrace", rc, err, 0);
+
+	errno = 0;
+	rc = syscall(SYS_personality, 1);
+	err = errno;
+	report("extra:personality:1", rc, err, 0);
+
+	errno = 0;
+	rc = syscall(SYS_personality, 2);
+	err = errno;
+	report("extra:personality:2", rc, err, EPERM);
+
+	errno = 0;
+	rc = syscall(SYS_getppid);
+	err = errno;
+	report("extra:getppid", rc, err, EPERM);
+
+	return failures ? 1 : 0;
+}
+EXTRA
+
+    if ! cc -O2 -static -o "$_tmp/extra-probe" "$_tmp/extra-probe.c" 2>"$_tmp/extra-cc.err"; then
+        if ! cc -O2 -o "$_tmp/extra-probe" "$_tmp/extra-probe.c"; then
+            cat "$_tmp/extra-cc.err" >&2
+            echo "seccomp-check: cannot compile extra-rule probe" >&2
+            _fail=1
+        fi
+    fi
+fi
+
+if (( _fail == 0 )); then
+    _extra_args=()
+    if (( _dynamic )); then
+        bwrap_base _extra_args
+        bwrap_lib64 _extra_args
+    else
+        _extra_args+=(--dev /dev)
+    fi
+    _extra_args+=(--ro-bind "$_tmp/extra-probe" /extra-probe)
+    bwrap_sandbox _extra_args no
+    if ! bwrap_seccomp _extra_args default \
+            "ptrace ALLOW" "personality ALLOW a0 == 1" "getppid EPERM"; then
+        echo "seccomp-check: cannot build the default+extra filter" >&2
+        _fail=1
+    else
+        _extra_status=0
+        bwrap "${_extra_args[@]}" -- /extra-probe >"$_tmp/extra-out" 2>&1 || _extra_status=$?
+        cat "$_tmp/extra-out"
+        if (( _extra_status != 0 )); then
+            echo "seccomp-check: extra-rule merge failed (status $_extra_status)" >&2
+            _fail=1
+        fi
+    fi
+fi
+
 if (( _fail )); then
     exit 1
 fi
 
 _passed=$(awk '/^PASS / { n++ } END { print n + 0 }' "$_tmp/out")
 _skipped=$(awk '/^SKIP / { n++ } END { print n + 0 }' "$_tmp/out")
-echo "seccomp-check: $_passed passed, $_skipped skipped (${#_rules[@]} unique rules)"
+echo "seccomp-check: $_passed passed, $_skipped skipped (${#_rules[@]} unique rules), including extra-rule merge"

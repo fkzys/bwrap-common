@@ -31,6 +31,15 @@ static const struct symbol symbols[] = {
 	{ "PER_LINUX32",   0x0008ULL },
 };
 
+struct rule {
+	int nr;
+	uint32_t action;
+	int have_cond;
+	struct scmp_arg_cmp cmp;
+	char *name;
+	const char *source;
+};
+
 static int strict_mode;
 
 static void usage(const char *msg)
@@ -38,7 +47,7 @@ static void usage(const char *msg)
 	if (msg)
 		fprintf(stderr, "%s: %s\n", PROG, msg);
 	fprintf(stderr,
-		"usage: %s --blocklist FILE [--arch ARCH] [--strict] -o OUT\n"
+		"usage: %s --blocklist FILE [--extra FILE] [--arch ARCH] [--strict] -o OUT\n"
 		"       %s --allowlist \"SPEC\" [--arch ARCH] -o OUT\n"
 		"       %s --version\n",
 		PROG, PROG, PROG);
@@ -243,15 +252,109 @@ static int export_bpf(scmp_filter_ctx ctx, const char *out)
 	return 0;
 }
 
-static int run_blocklist(const char *path, const char *out,
-			 const char *arch_name)
+static void rule_free_all(struct rule *rules, size_t count)
+{
+	size_t i;
+
+	for (i = 0; i < count; i++)
+		free(rules[i].name);
+	free(rules);
+}
+
+static void rule_remove_at(struct rule *rules, size_t *count, size_t idx)
+{
+	free(rules[idx].name);
+	if (idx + 1 < *count)
+		memmove(&rules[idx], &rules[idx + 1],
+			(*count - idx - 1) * sizeof(*rules));
+	(*count)--;
+}
+
+static void rule_remove_nr(struct rule *rules, size_t *count, int nr)
+{
+	size_t i = 0;
+
+	while (i < *count) {
+		if (rules[i].nr == nr)
+			rule_remove_at(rules, count, i);
+		else
+			i++;
+	}
+}
+
+static int cmp_equal(const struct scmp_arg_cmp *a,
+		     const struct scmp_arg_cmp *b)
+{
+	return a->arg == b->arg && a->op == b->op &&
+	       a->datum_a == b->datum_a && a->datum_b == b->datum_b;
+}
+
+static void rule_remove_cond(struct rule *rules, size_t *count, int nr,
+			     const struct scmp_arg_cmp *cmp)
+{
+	size_t i = 0;
+
+	while (i < *count) {
+		if (rules[i].nr == nr && rules[i].have_cond &&
+		    cmp_equal(&rules[i].cmp, cmp))
+			rule_remove_at(rules, count, i);
+		else
+			i++;
+	}
+}
+
+static int rule_append(struct rule **rules, size_t *count, size_t *cap,
+		       int nr, uint32_t action, int have_cond,
+		       const struct scmp_arg_cmp *cmp, const char *name,
+		       const char *source)
+{
+	struct rule *tmp;
+	char *dup;
+	size_t newcap;
+
+	if (*count == *cap) {
+		newcap = *cap ? *cap * 2 : 32;
+		if (newcap <= *cap)
+			return -1;
+		tmp = realloc(*rules, newcap * sizeof(*tmp));
+		if (!tmp)
+			return -1;
+		*rules = tmp;
+		*cap = newcap;
+	}
+
+	dup = strdup(name);
+	if (!dup)
+		return -1;
+
+	(*rules)[*count].nr = nr;
+	(*rules)[*count].action = action;
+	(*rules)[*count].have_cond = have_cond;
+	if (have_cond)
+		(*rules)[*count].cmp = *cmp;
+	else
+		memset(&(*rules)[*count].cmp, 0, sizeof((*rules)[*count].cmp));
+	(*rules)[*count].name = dup;
+	(*rules)[*count].source = source;
+	(*count)++;
+
+	return 0;
+}
+
+/*
+ * Parse one blocklist file into the rule array.  With merge set, each extra
+ * rule is applied on top of the rules already stored.  Conditional user rules
+ * can refine or tighten the defaults, but they leave unconditional default
+ * denies alone: the unconditional rule still dominates.  An unconditional
+ * user rule is the escape hatch that replaces every base rule for a syscall.
+ */
+static int parse_rules(const char *path, int merge, uint32_t arch,
+		       struct rule **rules, size_t *count, size_t *cap)
 {
 	char *line = NULL;
 	size_t linecap = 0;
 	ssize_t nread;
-	scmp_filter_ctx ctx;
 	FILE *f;
-	uint32_t arch;
 	int rc = 0;
 
 	f = fopen(path, "r");
@@ -260,16 +363,6 @@ static int run_blocklist(const char *path, const char *out,
 			PROG, path, strerror(errno));
 		return 1;
 	}
-
-	ctx = seccomp_init(SCMP_ACT_ALLOW);
-	if (!ctx) {
-		fprintf(stderr, "%s: cannot initialize seccomp filter\n", PROG);
-		fclose(f);
-		return 1;
-	}
-	rc = select_arch(ctx, arch_name, &arch);
-	if (rc != 0)
-		goto done;
 
 	while ((nread = getline(&line, &linecap, f)) != -1) {
 		struct scmp_arg_cmp cmp = { 0 };
@@ -282,7 +375,6 @@ static int run_blocklist(const char *path, const char *out,
 		uint32_t action;
 		int nr;
 		int have_cond = 0;
-		int add_rc;
 
 		comment = strchr(line, '#');
 		if (comment)
@@ -304,6 +396,8 @@ static int run_blocklist(const char *path, const char *out,
 			action = SCMP_ACT_ERRNO(EPERM);
 		} else if (strcmp(acttok, "ENOSYS") == 0) {
 			action = SCMP_ACT_ERRNO(ENOSYS);
+		} else if (strcmp(acttok, "ALLOW") == 0) {
+			action = SCMP_ACT_ALLOW;
 		} else {
 			fprintf(stderr, "%s: %s: invalid action '%s'\n",
 				PROG, path, acttok);
@@ -366,15 +460,85 @@ static int run_blocklist(const char *path, const char *out,
 			cmp.datum_b = value & 0xffffffffU;
 		}
 
-		if (have_cond)
-			add_rc = seccomp_rule_add(ctx, action, nr, 1, cmp);
+		if (merge) {
+			if (!have_cond) {
+				rule_remove_nr(*rules, count, nr);
+				/* The default action is ALLOW already. */
+				if (action == SCMP_ACT_ALLOW)
+					continue;
+			} else {
+				rule_remove_cond(*rules, count, nr, &cmp);
+			}
+		}
+
+		if (rule_append(rules, count, cap, nr, action, have_cond,
+				&cmp, systok, path) != 0) {
+			fprintf(stderr, "%s: out of memory\n", PROG);
+			rc = 1;
+			goto done;
+		}
+	}
+
+done:
+	free(line);
+	fclose(f);
+	return rc;
+}
+
+static int run_blocklist(const char *path, const char *extra, const char *out,
+			 const char *arch_name)
+{
+	scmp_filter_ctx ctx;
+	struct rule *rules = NULL;
+	size_t count = 0;
+	size_t cap = 0;
+	size_t i;
+	uint32_t arch;
+	int rc = 0;
+
+	ctx = seccomp_init(SCMP_ACT_ALLOW);
+	if (!ctx) {
+		fprintf(stderr, "%s: cannot initialize seccomp filter\n", PROG);
+		return 1;
+	}
+	rc = select_arch(ctx, arch_name, &arch);
+	if (rc != 0)
+		goto done;
+
+	rc = parse_rules(path, 0, arch, &rules, &count, &cap);
+	if (rc != 0)
+		goto done;
+
+	if (extra) {
+		rc = parse_rules(extra, 1, arch, &rules, &count, &cap);
+		if (rc != 0)
+			goto done;
+	}
+
+	for (i = 0; i < count; i++) {
+		int add_rc;
+
+		/*
+		 * The filter default is ALLOW, so ALLOW rules are already
+		 * satisfied and libseccomp refuses to add them.  They still
+		 * participate in the merge above, where they replace matching
+		 * deny rules.
+		 */
+		if (rules[i].action == SCMP_ACT_ALLOW)
+			continue;
+
+		if (rules[i].have_cond)
+			add_rc = seccomp_rule_add(ctx, rules[i].action,
+						  rules[i].nr, 1, rules[i].cmp);
 		else
-			add_rc = seccomp_rule_add(ctx, action, nr, 0);
+			add_rc = seccomp_rule_add(ctx, rules[i].action,
+						  rules[i].nr, 0);
 
 		if (add_rc < 0) {
 			fprintf(stderr,
 				"%s: %s: cannot add rule for '%s': %s\n",
-				PROG, path, systok, strerror(-add_rc));
+				PROG, rules[i].source, rules[i].name,
+				strerror(-add_rc));
 			rc = 1;
 			goto done;
 		}
@@ -383,8 +547,7 @@ static int run_blocklist(const char *path, const char *out,
 	rc = export_bpf(ctx, out);
 
 done:
-	free(line);
-	fclose(f);
+	rule_free_all(rules, count);
 	if (rc != 0)
 		unlink(out);
 	seccomp_release(ctx);
@@ -556,6 +719,7 @@ int main(int argc, char **argv)
 {
 	static const struct option longopts[] = {
 		{ "blocklist", required_argument, NULL, 'b' },
+		{ "extra",     required_argument, NULL, 'e' },
 		{ "allowlist", required_argument, NULL, 'a' },
 		{ "output",    required_argument, NULL, 'o' },
 		{ "arch",      required_argument, NULL, 'A' },
@@ -564,6 +728,7 @@ int main(int argc, char **argv)
 		{ NULL,        0,                 NULL, 0   },
 	};
 	const char *blocklist = NULL;
+	const char *extra = NULL;
 	const char *allowlist = NULL;
 	const char *out = NULL;
 	const char *arch_name = NULL;
@@ -571,10 +736,15 @@ int main(int argc, char **argv)
 	int version = 0;
 	int opt;
 
-	while ((opt = getopt_long(argc, argv, "a:A:b:o:sV", longopts, NULL)) != -1) {
+	while ((opt = getopt_long(argc, argv, "a:A:b:e:o:sV", longopts, NULL)) != -1) {
 		switch (opt) {
 		case 'b':
 			blocklist = optarg;
+			break;
+		case 'e':
+			if (extra)
+				usage("--extra may be specified only once");
+			extra = optarg;
 			break;
 		case 'a':
 			allowlist = optarg;
@@ -600,7 +770,7 @@ int main(int argc, char **argv)
 		usage("unexpected positional argument");
 
 	if (version) {
-		puts("2");
+		puts("3");
 		return 0;
 	}
 
@@ -608,6 +778,10 @@ int main(int argc, char **argv)
 		usage("one of --blocklist or --allowlist is required");
 	if (blocklist && allowlist)
 		usage("--blocklist and --allowlist are mutually exclusive");
+	if (extra && !blocklist)
+		usage("--extra requires --blocklist");
+	if (extra && allowlist)
+		usage("--extra is not valid with --allowlist");
 	if (strict && !blocklist)
 		usage("--strict requires --blocklist");
 	if (!out)
@@ -615,7 +789,7 @@ int main(int argc, char **argv)
 
 	strict_mode = strict;
 	if (blocklist)
-		return run_blocklist(blocklist, out, arch_name);
+		return run_blocklist(blocklist, extra, out, arch_name);
 
 	return run_allowlist(allowlist, out, arch_name);
 }

@@ -80,7 +80,7 @@ secrets and loader/interpreter variables from the calling environment.
 | `bwrap_runtime_dir` | XDG_RUNTIME_DIR with correct permissions |
 | `bwrap_env_base` | `HOME`, `LANG`, `PATH`, `TERM`, `XDG_RUNTIME_DIR`, `XDG_CACHE_HOME=$HOME/.cache` |
 | `bwrap_sandbox` | `--unshare-all`, optional `--share-net` / `--new-session` |
-| `bwrap_seccomp` | Add `--seccomp` from the precompiled default blocklist or a compiled syscall allowlist |
+| `bwrap_seccomp` | Compile `seccomp/default.conf` (optionally merged with extra rules) or a syscall allowlist at runtime, then add one `--seccomp` descriptor |
 | `bwrap_resolve_files` | Resolve file arguments to bind mounts |
 | `bwrap_bind_dir` | Create state dirs on host + add `--bind` |
 | `bwrap_ro_bind_dir` | Bind pre-existing dirs read-only, skip missing |
@@ -112,7 +112,7 @@ secrets and loader/interpreter variables from the calling environment.
 - `$4` — malloc: `default` (default, enabled), `light`, or `no` (opt-out)
 - `$5` — D-Bus mode: `filtered` (default), `unfiltered`, `none`; `filtered` returns non-zero if `xdg-dbus-proxy` is unavailable
 - `$6` — themes: `yes`/`no` (default `yes`)
-- `$7` — seccomp: `default`/`none` (default `default`); `default` returns non-zero if the filter blob is unavailable; use `bwrap_seccomp` directly for an allowlist
+- `$7` — seccomp: `default`/`none` (default `default`); `default` returns non-zero if the default config or generator is unavailable; no blob is used; use `bwrap_seccomp` directly for an allowlist or `default` plus extra rules
 
 ### D-Bus filtering
 
@@ -148,25 +148,61 @@ When using filtered D-Bus, wrappers must call `bwrap_exec` instead of
 
 ## Seccomp
 
-`bwrap_gui_finish` applies the precompiled default blocklist unless the 7th
-parameter is `none`. The blocklist is default-allow: it denies syscalls that
-are dangerous inside a sandbox (`mount`, `pivot_root`, `chroot`, `unshare`,
-`setns`, `ptrace`, `bpf`, `io_uring_*`, `userfaultfd`, `process_vm_*`,
-keyring operations, `clone` with `CLONE_NEWUSER`, and a few more). See
-`seccomp/default.conf` for the exact list.
+`bwrap_gui_finish` applies the default blocklist unless the 7th parameter is
+`none`. The blocklist is default-allow: it denies syscalls that are dangerous
+inside a sandbox (`mount`, `pivot_root`, `chroot`, `unshare`, `setns`, `ptrace`,
+`bpf`, `io_uring_*`, `userfaultfd`, `process_vm_*`, keyring operations, `clone`
+with `CLONE_NEWUSER`, and a few more). See `seccomp/default.conf` for the exact
+list.
 
-`bwrap_seccomp A default` applies
-`<BWRAP_SECCOMP_DIR>/default.$(uname -m).bpf`. A missing, malformed, or
-wrong-architecture blob fails closed: the function returns non-zero and adds
-no filter. Architecture magic is checked in the target's native byte order
-(including big-endian s390x/mips/parisc); an unsupported `uname -m` also fails
-closed. Use `none` to disable seccomp explicitly.
+`bwrap_seccomp A default` compiles
+`${BWRAP_SECCOMP_CONF:-<BWRAP_SECCOMP_DIR>/default.conf}` at runtime with the
+installed generator and caches the resulting BPF filter. A missing or unreadable
+config, a missing generator, or a compile failure returns non-zero and adds no
+filter. Use `none` to disable seccomp explicitly.
+
+Extra rules can be appended to `default`; each argument is one blocklist rule:
+
+```sh
+bwrap_seccomp A default "getppid EPERM" "kexec_load ENOSYS"
+```
+
+The default config and the extra rules are compiled into one combined filter,
+not stacked filters. There is no second `--add-seccomp-fd`; `bwrap_seccomp`
+appends a single `--seccomp FD`. User rules have priority over the base rules:
+
+- An unconditional extra rule removes all base rules for that syscall, then
+  adds the user's action. An unconditional `ALLOW` therefore unblocks it.
+- A conditional extra rule removes only the base rule with the same normalized
+  condition, then adds the user's rule.
+- A conditional extra rule cannot override an unconditional default deny; the
+  unconditional rule still dominates.
+
+`ALLOW` is a valid action in extra rules. `bwrap_gui_finish` still accepts only
+`default`/`none`, so extra rules go through `bwrap_seccomp` directly.
+
+Rules use `seccomp/default.conf` format: actions are `EPERM`, `ENOSYS`, or
+`ALLOW`, and argument conditions are supported.
+
+The default filter cache key hashes the architecture and the content of
+`default.conf`, so editing the config or switching architectures produces a new
+cache entry:
+
+- default: `sha256("bwrap-common-seccomp-default-v3\n<arch>\n<default_conf_sha256>\n")`
+- default+extra: `sha256("bwrap-common-seccomp-default-extra-v3\n<arch>\n<default_conf_sha256>\n<extra_spec>\n")`
+
+The generator reports version 3. The cache is host-side and trusted, so no root
+cache is needed. If the cache directory is unavailable, `bwrap_seccomp` warns
+and compiles into a temporary file in `$XDG_RUNTIME_DIR` (tmpfs), opens it,
+unlinks it immediately, and passes `--seccomp FD`. If there is no writable
+runtime dir, it fails closed.
 
 `bwrap_seccomp A "openat read write"` compiles a syscall **allowlist** and
-caches the result. Allowlist mode is fail-closed: an unknown syscall name, a
-missing generator, or a compile failure returns non-zero. It is a power-user
-API and is not accepted through `bwrap_gui_finish`, which only accepts
-`default`/`none`.
+caches the result with the same cache and tmpfs fallback machinery. Its cache
+key is `sha256("bwrap-common-seccomp-v3\n<arch>\n<spec>\n")`. Allowlist mode is
+fail-closed: an unknown syscall name, a missing generator, or a compile failure
+returns non-zero. It is a power-user API and is not accepted through
+`bwrap_gui_finish`, which only accepts `default`/`none`.
 
 The filter descriptor stays open so bwrap can inherit it. In proxy mode
 `bwrap_exec` closes the parent copy after starting bwrap; if you invoke `bwrap`
@@ -183,17 +219,16 @@ The allowlist always permits the syscalls needed by the new process
 
 Build/install:
 
-- `make build` compiles `build/bwrap-seccomp-gen` and generates
-  `build/seccomp/default.$(uname -m).bpf` with `--strict`; set `ARCH=` to build
-  a blob for another libseccomp-supported target architecture.
+- `make build` compiles only `build/bwrap-seccomp-gen`.
 - `bwrap-seccomp-gen --strict` rejects syscall names that no supported
   architecture knows; target-specific legacy names are still skipped with a
   warning.
-- `make install` does not build; run `make build` first. It installs the helper
-  to `/usr/lib/bwrap-common/bwrap-seccomp-gen` and the blob to
-  `/usr/lib/bwrap-common/seccomp/`.
+- `make install` does not build; run `make build` first. It installs the
+  library, the helper to `/usr/lib/bwrap-common/bwrap-seccomp-gen`, and the
+  runtime source `seccomp/default.conf` to `/usr/lib/bwrap-common/seccomp/`.
+  No BPF blob is generated or installed.
 - `gcc` and the `libseccomp` headers are build-time dependencies;
-  `libseccomp` is a runtime dependency.
+  `libseccomp` is a runtime dependency of the generator.
 
 `ioctl` command comparisons are masked to 32 bits because the kernel truncates
 the command to `unsigned int`; this prevents high-bit aliases of `TIOCSTI` and
