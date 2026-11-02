@@ -789,25 +789,55 @@ else
     fail "concurrent cache writers left rc=$CONC_RC entry=${CONC_BPF:-none}"
 fi
 
-SHARED_CACHE="${TMPDIR_TEST}/shared-cache"
-mkdir -p "$SHARED_CACHE"
-if [[ -n "$DEFAULT_CACHE_BLOB" ]]; then
-    cp "$DEFAULT_CACHE_BLOB" "$SHARED_CACHE/"
-    cp "${DEFAULT_CACHE_BLOB}.sha256" "$SHARED_CACHE/"
-fi
-chmod 777 "$SHARED_CACHE"
-SHARED_BEFORE=$(wc -c < "$GEN_COUNTER" 2>/dev/null || echo 0)
-SH=()
-BWRAP_SECCOMP_CACHE_DIR="$SHARED_CACHE" bwrap_seccomp SH default 2>"${TMPDIR_TEST}/shared-cache.err"
-SH_RC=$?
-SHARED_CALLS=$(wc -c < "$GEN_COUNTER" 2>/dev/null || echo 0)
-SHARED_ERR=$(cat "${TMPDIR_TEST}/shared-cache.err" 2>/dev/null)
-if [[ $SH_RC -eq 0 && ${#SH[@]} -eq 2 &&
-      "$SHARED_CALLS" -gt "$SHARED_BEFORE" &&
-      "$SHARED_ERR" == *"seccomp cache unavailable"* ]]; then
-    ok "shared cache directory is rejected and bypassed"
+if [[ -z "$DEFAULT_CACHE_BLOB" || ! -f "$DEFAULT_CACHE_BLOB" ||
+      ! -f "${DEFAULT_CACHE_BLOB}.sha256" ]]; then
+    fail "cannot test unsafe cache without a cached filter"
 else
-    fail "shared cache was used (rc=$SH_RC calls=$SHARED_BEFORE/$SHARED_CALLS)"
+    for _mode in 777 770; do
+        SHARED_CACHE="${TMPDIR_TEST}/shared-cache-${_mode}"
+        mkdir -p "$SHARED_CACHE"
+        cp "$DEFAULT_CACHE_BLOB" "$SHARED_CACHE/"
+        cp "${DEFAULT_CACHE_BLOB}.sha256" "$SHARED_CACHE/"
+        chmod "$_mode" "$SHARED_CACHE"
+        SHARED_BEFORE=$(wc -c < "$GEN_COUNTER" 2>/dev/null || echo 0)
+        SH=()
+        BWRAP_SECCOMP_CACHE_DIR="$SHARED_CACHE" \
+            bwrap_seccomp SH default 2>"${TMPDIR_TEST}/shared-cache-${_mode}.err"
+        SH_RC=$?
+        SHARED_CALLS=$(wc -c < "$GEN_COUNTER" 2>/dev/null || echo 0)
+        SHARED_ERR=$(cat "${TMPDIR_TEST}/shared-cache-${_mode}.err" 2>/dev/null)
+        if [[ $SH_RC -eq 0 && ${#SH[@]} -eq 2 &&
+              "$SHARED_CALLS" -gt "$SHARED_BEFORE" &&
+              "$SHARED_ERR" == *"chmod go-w"* ]]; then
+            ok "cache directory mode $_mode is rejected and bypassed"
+        else
+            fail "cache mode $_mode was used (rc=$SH_RC calls=$SHARED_BEFORE/$SHARED_CALLS)"
+        fi
+    done
+
+    FOREIGN_CACHE="${TMPDIR_TEST}/foreign-cache"
+    mkdir -p "$FOREIGN_CACHE"
+    if chown 65534:65534 "$FOREIGN_CACHE" 2>/dev/null; then
+        cp "$DEFAULT_CACHE_BLOB" "$FOREIGN_CACHE/"
+        cp "${DEFAULT_CACHE_BLOB}.sha256" "$FOREIGN_CACHE/"
+        chmod 700 "$FOREIGN_CACHE"
+        FOREIGN_BEFORE=$(wc -c < "$GEN_COUNTER" 2>/dev/null || echo 0)
+        FOREIGN=()
+        BWRAP_SECCOMP_CACHE_DIR="$FOREIGN_CACHE" \
+            bwrap_seccomp FOREIGN default 2>"${TMPDIR_TEST}/foreign-cache.err"
+        FOREIGN_RC=$?
+        FOREIGN_CALLS=$(wc -c < "$GEN_COUNTER" 2>/dev/null || echo 0)
+        FOREIGN_ERR=$(cat "${TMPDIR_TEST}/foreign-cache.err" 2>/dev/null)
+        if [[ $FOREIGN_RC -eq 0 && ${#FOREIGN[@]} -eq 2 &&
+              "$FOREIGN_CALLS" -gt "$FOREIGN_BEFORE" &&
+              "$FOREIGN_ERR" == *"not current uid"* ]]; then
+            ok "foreign-owned cache directory is rejected and bypassed"
+        else
+            fail "foreign-owned cache was used (rc=$FOREIGN_RC calls=$FOREIGN_BEFORE/$FOREIGN_CALLS)"
+        fi
+    else
+        ok "foreign-owner cache test skipped (chown unavailable)"
+    fi
 fi
 
 SECCOMP_FD="${SB[1]:-}"

@@ -206,7 +206,9 @@ entry. The sidecar is installed before the filter, and invalid entries are
 overwritten rather than removed, so concurrent writers cannot delete a fresh
 entry. The generator reports version 4 plus the loaded libseccomp version. The
 cache directory must be owned by the current user and must not be writable by
-group or others; otherwise it is bypassed for the runtime fallback. The cache is
+group or others; otherwise it is bypassed for the runtime fallback. Symlinks are
+resolved with `realpath` before that check, but parent directories are not
+validated, so the cache path must be under a trusted parent. The cache is
 host-side and trusted; the key and checksum catch stale or corrupted outputs,
 not a malicious writer. If the cache directory is unavailable, `bwrap_seccomp`
 warns once per cache directory and compiles into a temporary file in

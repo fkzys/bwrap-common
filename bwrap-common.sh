@@ -554,27 +554,57 @@ _bwrap_seccomp_conf() {
 
 # Internal: create/validate the persistent cache directory.
 _bwrap_seccomp_cache_ready() {
-    local _cache="$1" _owner _mode _uid
-    _uid=$(id -u) || return 1
+    local _cache="$1" _real _owner _mode _uid
+    _uid=$(id -u) || {
+        printf '%s' "cannot determine current uid"
+        return 1
+    }
 
     if [[ ! -e "$_cache" ]]; then
-        ( umask 077; command mkdir -p "$_cache" 2>/dev/null ) || return 1
+        ( umask 077; command mkdir -p "$_cache" 2>/dev/null ) || {
+            printf '%s' "cannot create directory"
+            return 1
+        }
     fi
-    [[ -d "$_cache" && -w "$_cache" ]] || return 1
-
-    _owner=$(stat -c %u -- "$_cache" 2>/dev/null) || return 1
-    [[ "$_owner" == "$_uid" ]] || return 1
-    _mode=$(stat -c %a -- "$_cache" 2>/dev/null) || return 1
-    (( (8#$_mode & 0022) == 0 ))
+    [[ -d "$_cache" && -w "$_cache" ]] || {
+        printf '%s' "not a writable directory"
+        return 1
+    }
+    _real=$(realpath -e -- "$_cache" 2>/dev/null) || {
+        printf '%s' "cannot resolve directory path"
+        return 1
+    }
+    _owner=$(stat -c %u -- "$_real" 2>/dev/null) || {
+        printf '%s' "cannot stat directory owner"
+        return 1
+    }
+    if [[ "$_owner" != "$_uid" ]]; then
+        printf 'owner uid %s is not current uid %s' "$_owner" "$_uid"
+        return 1
+    fi
+    _mode=$(stat -c %a -- "$_real" 2>/dev/null) || {
+        printf '%s' "cannot stat directory mode"
+        return 1
+    }
+    if (( (8#$_mode & 0022) != 0 )); then
+        printf 'mode %s is writable by group or others; run chmod go-w %q' \
+            "$_mode" "$_cache"
+        return 1
+    fi
+    return 0
 }
 
 _bwrap_seccomp_warn_cache() {
-    local _cache="${1:-}"
+    local _cache="${1:-}" _reason="${2:-}"
     if [[ -n "${_BWRAP_SECCOMP_WARNED_CACHES[$_cache]:-}" ]]; then
         return 0
     fi
     _BWRAP_SECCOMP_WARNED_CACHES["$_cache"]=1
-    echo "bwrap_seccomp: seccomp cache unavailable ($_cache); using runtime tmpfs fallback" >&2
+    if [[ -n "$_reason" ]]; then
+        echo "bwrap_seccomp: seccomp cache unavailable ($_cache): $_reason; using runtime tmpfs fallback" >&2
+    else
+        echo "bwrap_seccomp: seccomp cache unavailable ($_cache); using runtime tmpfs fallback" >&2
+    fi
 }
 
 _bwrap_seccomp_conf_path() {
@@ -691,8 +721,12 @@ _bwrap_seccomp_prepare() {
 
     _cache="${BWRAP_SECCOMP_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/bwrap-common/seccomp}"
     _cache_file="${_cache}/${_hash}.bpf"
-    local _cache_ready=0
-    _bwrap_seccomp_cache_ready "$_cache" && _cache_ready=1
+    local _cache_ready=0 _cache_reason=""
+    if _cache_reason=$(_bwrap_seccomp_cache_ready "$_cache"); then
+        _cache_ready=1
+    else
+        _bwrap_seccomp_warn_cache "$_cache" "$_cache_reason"
+    fi
 
     if (( _cache_ready )) && [[ -f "$_cache_file" ]]; then
         if _bwrap_seccomp_cache_valid "$_cache_file"; then
@@ -735,8 +769,6 @@ _bwrap_seccomp_prepare() {
         _bwrap_seccomp_tmp_remove "$_tmp"
         _bwrap_seccomp_tmp_remove "$_sum"
         echo "bwrap_seccomp: cached filter compilation failed; retrying in runtime tmpfs" >&2
-    else
-        _bwrap_seccomp_warn_cache "$_cache"
     fi
 
     _bwrap_seccomp_runtime_prepare "$_kind" "$_payload" _prep_path _prep_temp
