@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - 'bwrap-common.sh'
+      - 'bwrap-common-*.sh'
       - 'tests/**'
       - 'seccomp/**'
       - 'tools/**'
@@ -12,6 +13,7 @@ on:
   pull_request:
     paths:
       - 'bwrap-common.sh'
+      - 'bwrap-common-*.sh'
       - 'tests/**'
       - 'seccomp/**'
       - 'tools/**'
@@ -23,7 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - run: shellcheck -s bash -e SC2034,SC2178,SC2317 bwrap-common.sh tests/seccomp-check.sh tests/arch-table-check.sh
+      - run: shellcheck -s bash -e SC2034,SC2178,SC2317 bwrap-common.sh bwrap-common-seccomp.sh bwrap-common-dbus.sh tests/seccomp-check.sh tests/arch-table-check.sh
 
   test:
     runs-on: ubuntu-latest

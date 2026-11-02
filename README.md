@@ -35,9 +35,9 @@ sudo make install
 ```
 
 `make build` builds only `build/bwrap-seccomp-gen`, the seccomp rule compiler.
-`make install` installs the library, the generator, and `seccomp/default.conf`;
-no BPF blob is generated or installed. `gcc` and the `libseccomp` headers are
-required to build the generator.
+`make install` installs the library entry point and its two modules, the
+generator, and `seccomp/default.conf`; no BPF blob is generated or installed.
+`gcc` and the `libseccomp` headers are required to build the generator.
 
 ### Uninstall
 
@@ -131,7 +131,9 @@ blocklist rules can be merged into the default filter with
 
 | Path | Purpose |
 |---|---|
-| `/usr/lib/bwrap-common/bwrap-common.sh` | Library |
+| `/usr/lib/bwrap-common/bwrap-common.sh` | Library entry point; sources the modules below |
+| `/usr/lib/bwrap-common/bwrap-common-seccomp.sh` | seccomp filter module (internal, sourced by the entry point) |
+| `/usr/lib/bwrap-common/bwrap-common-dbus.sh` | filtered D-Bus module (internal, sourced by the entry point) |
 | `/usr/lib/bwrap-common/bwrap-seccomp-gen` | Runtime rule compiler |
 | `/usr/lib/bwrap-common/seccomp/default.conf` | Default blocklist source, compiled at runtime |
 | `seccomp/default.conf` | Default blocklist source in the repo |
