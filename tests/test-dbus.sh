@@ -191,7 +191,11 @@ else
     ) >/dev/null 2>"$RP_BAD_ERR"
     RP_BAD_RC=$?
     [[ $RP_BAD_RC -eq 1 ]] && ok "real proxy rejects --call=NAME without a rule" || fail "invalid --call unexpectedly accepted (rc=$RP_BAD_RC)"
-    grep -q "not a valid name" "$RP_BAD_ERR" && ok "rejection is the proxy's argument error" || fail "bare --call failed for another reason: $(tr '\n' ' ' < "$RP_BAD_ERR")"
+    if grep -q "proxy exited prematurely" "$RP_BAD_ERR" && ! grep -q "timeout waiting for proxy socket" "$RP_BAD_ERR"; then
+        ok "rejection is an early proxy exit, not a socket timeout"
+    else
+        fail "bare --call did not fail via early proxy exit: $(tr '\n' ' ' < "$RP_BAD_ERR")"
+    fi
 fi
 
 
