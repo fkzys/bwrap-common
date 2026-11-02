@@ -133,6 +133,11 @@ with an empty `PATH` so `xdg-dbus-proxy` is unavailable:
   `_bwrap_dbus_proxy_start` stubbed it resolves the system bus address, forwards
   rules, creates `/run/dbus`, binds the proxy at the standard system socket, and
   sets `DBUS_SYSTEM_BUS_ADDRESS`
+- with no bus and no proxy, `bwrap_dbus_filtered` and
+  `bwrap_dbus_system_filtered` return 0 and append nothing: the bus check runs
+  before the proxy dependency check, so a missing bus is skipped rather than
+  reported as a missing proxy (the session case is unconditional; the
+  system-bus case runs when `/run/dbus/system_bus_socket` is absent)
 - against the real `xdg-dbus-proxy` — a hard dependency of the suite, installed
   by CI — the full `bwrap_dbus_system_filtered` path is exercised: the proxy
   starts, the socket appears, `/proc/<pid>/cmdline` shows `--filter` and the

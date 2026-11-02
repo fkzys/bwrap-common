@@ -207,11 +207,6 @@ bwrap_dbus_filtered() {
     local _arrname="$1"; shift
     local -n _df="$_arrname"
 
-    if ! command -v xdg-dbus-proxy >/dev/null 2>&1; then
-        echo "bwrap_dbus_filtered: xdg-dbus-proxy not found (required for filtered D-Bus)" >&2
-        return 1
-    fi
-
     local bus_addr="${DBUS_SESSION_BUS_ADDRESS:-}"
     if [[ -z "$bus_addr" ]]; then
         if [[ -S "${XDG_RUNTIME_DIR}/bus" ]]; then
@@ -220,6 +215,11 @@ bwrap_dbus_filtered() {
             echo "bwrap_dbus_filtered: no session bus found, skipping" >&2
             return 0
         fi
+    fi
+
+    if ! command -v xdg-dbus-proxy >/dev/null 2>&1; then
+        echo "bwrap_dbus_filtered: xdg-dbus-proxy not found (required for filtered D-Bus)" >&2
+        return 1
     fi
 
     local proxy_sock="${XDG_RUNTIME_DIR}/bwrap-dbus-proxy-$$-${RANDOM}.sock"
@@ -238,11 +238,6 @@ bwrap_dbus_system_filtered() {
     local _arrname="$1"; shift
     local -n _ds="$_arrname"
 
-    if ! command -v xdg-dbus-proxy >/dev/null 2>&1; then
-        echo "bwrap_dbus_system_filtered: xdg-dbus-proxy not found (required for filtered D-Bus)" >&2
-        return 1
-    fi
-
     local bus_addr="${DBUS_SYSTEM_BUS_ADDRESS:-}"
     if [[ -z "$bus_addr" ]]; then
         if [[ -S /run/dbus/system_bus_socket ]]; then
@@ -251,6 +246,11 @@ bwrap_dbus_system_filtered() {
             echo "bwrap_dbus_system_filtered: no system bus found, skipping" >&2
             return 0
         fi
+    fi
+
+    if ! command -v xdg-dbus-proxy >/dev/null 2>&1; then
+        echo "bwrap_dbus_system_filtered: xdg-dbus-proxy not found (required for filtered D-Bus)" >&2
+        return 1
     fi
 
     local proxy_sock="${XDG_RUNTIME_DIR}/bwrap-system-bus-proxy-$$-${RANDOM}.sock"

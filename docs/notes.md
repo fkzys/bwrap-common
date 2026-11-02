@@ -135,6 +135,13 @@ unfiltered bus explicitly.
 If no session bus is available, filtered mode is skipped because there is
 nothing to proxy.
 
+`xdg-dbus-proxy` versions before 0.1.7 have
+CVE-2026-34080 (an eavesdrop filter bypass), so keep the package updated
+through your distribution (for example Ubuntu noble `0.1.5-1ubuntu0.2`
+backports the fix; 0.1.7 upstream has it). The library does not check the
+version and does not try to secure the host or the CI environment; that is the
+operator's responsibility.
+
 `bwrap_dbus_common` wraps `bwrap_dbus_filtered` with a session-bus default rule set:
 
 | Rule group | Bus names |

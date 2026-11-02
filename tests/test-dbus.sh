@@ -25,6 +25,11 @@ DF_RC=$?
 [[ $DF_RC -eq 1 ]] && ok "missing xdg-dbus-proxy fails closed" || fail "missing proxy returned $DF_RC"
 [[ ${#DF[@]} -eq 0 ]] && ok "missing proxy appends nothing" || fail "missing proxy appended ${DF[*]}"
 
+DNB=()
+PATH="$EMPTY_PATH" DBUS_SESSION_BUS_ADDRESS="" bwrap_dbus_filtered DNB 2>/dev/null
+DNB_RC=$?
+[[ $DNB_RC -eq 0 && ${#DNB[@]} -eq 0 ]] && ok "no session bus is skipped before the proxy check" || fail "no session bus returned $DNB_RC"
+
 DSESS_PROXY_ARGS="${TMPDIR_TEST}/session-filtered-proxy-args"
 DSESS_ARRAY="${TMPDIR_TEST}/session-filtered-array"
 (
@@ -115,6 +120,13 @@ DSF=()
 PATH="$EMPTY_PATH" DBUS_SYSTEM_BUS_ADDRESS="$NO_PROXY_ADDR" bwrap_dbus_system_filtered DSF --talk=org.freedesktop.UPower 2>/dev/null
 DSF_RC=$?
 [[ $DSF_RC -eq 1 && ${#DSF[@]} -eq 0 ]] && ok "system filtered missing proxy fails closed" || fail "system filtered missing proxy returned $DSF_RC"
+
+if [[ ! -S /run/dbus/system_bus_socket ]]; then
+    DNS=()
+    PATH="$EMPTY_PATH" DBUS_SYSTEM_BUS_ADDRESS="" bwrap_dbus_system_filtered DNS 2>/dev/null
+    DNS_RC=$?
+    [[ $DNS_RC -eq 0 && ${#DNS[@]} -eq 0 ]] && ok "no system bus is skipped before the proxy check" || fail "no system bus returned $DNS_RC"
+fi
 
 DSYS_PROXY_ARGS="${TMPDIR_TEST}/system-filtered-proxy-args"
 DSYS_ARRAY="${TMPDIR_TEST}/system-filtered-array"
