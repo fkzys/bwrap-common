@@ -74,7 +74,7 @@ secrets and loader/interpreter variables from the calling environment.
 | `bwrap_dbus_system` | System D-Bus socket |
 | `bwrap_dbus_system_filtered` | Filtered system D-Bus via `xdg-dbus-proxy`; caller supplies rules |
 | `bwrap_dbus_filtered` | Filtered D-Bus via `xdg-dbus-proxy` with custom rules; fails if the proxy is unavailable |
-| `bwrap_dbus_common` | Pre-configured filtered D-Bus for typical GUI apps (XDG portals, notifications, status notifier, screen saver, login1, a11y); accepts extra rules |
+| `bwrap_dbus_common` | Pre-configured filtered D-Bus for session desktop apps (XDG portals, notifications, status notifier, screen saver, a11y); accepts extra rules |
 | `bwrap_themes` | GTK2/3, dconf, fontconfig, Qt, Kvantum, fonts, icons |
 | `bwrap_fcitx` | fcitx5 input method sockets + env |
 | `bwrap_home_tmpfs` | tmpfs `$HOME` with XDG skeleton |
@@ -135,23 +135,63 @@ unfiltered bus explicitly.
 If no session bus is available, filtered mode is skipped because there is
 nothing to proxy.
 
-`bwrap_dbus_common` wraps `bwrap_dbus_filtered` with a default rule set:
+`bwrap_dbus_common` wraps `bwrap_dbus_filtered` with a session-bus default rule set:
 
 | Rule group | Bus names |
 |---|---|
 | XDG portals | `org.freedesktop.portal.Desktop`, `org.freedesktop.portal.Documents` |
-| GUI services | `org.freedesktop.Notifications`, `org.kde.StatusNotifierWatcher`, `org.freedesktop.ScreenSaver`, `org.freedesktop.login1`, `org.a11y.Bus` |
+| GUI services | `org.freedesktop.Notifications`, `org.kde.StatusNotifierWatcher`, `org.freedesktop.ScreenSaver`, `org.a11y.Bus` |
 
 Extra `--talk`/`--own` rules can be appended per-app.
 
-`bwrap_dbus_system_filtered` filters the system bus at
-`/run/dbus/system_bus_socket`. It accepts the same `xdg-dbus-proxy` rules as
+`bwrap_dbus_common` intentionally does not load system-bus services. The
+following groups were considered and excluded:
+
+| Group | Examples | Reason |
+|---|---|---|
+| Power and sessions | `org.freedesktop.login1`, `org.freedesktop.UPower` | power/session control; logind is a system-bus service, so access requires explicit system-bus rules |
+| Storage | `org.freedesktop.UDisks2` | mount/unmount and filesystem operations are privileged |
+| Networking | `org.freedesktop.NetworkManager`, `org.freedesktop.ModemManager1` | can change network state and connections |
+| Bluetooth | `org.bluez` | pairing, connecting, file transfer |
+| System configuration | `hostname1`, `timedate1`, `locale1`, `Accounts` | writes are privileged and app-specific |
+| Realtime scheduling | `org.freedesktop.RealtimeKit1` | affects process scheduling; audio apps only |
+| Updates and services | `systemd1`, `PackageKit`, `fwupd` | package and unit management is privileged |
+| Virtualization and policy | `org.libvirt`, `org.freedesktop.PolicyKit1` | VM management and authorization should stay outside the sandbox |
+| Color, location, biometrics | `ColorManager`, `GeoClue2`, `fprintd` | privacy- and security-sensitive |
+
+### Why there is no `bwrap_dbus_system_common`
+
+A single system-bus default cannot be both safe and useful. A default based on
+`--talk` would grant full access to power, storage, networking and Bluetooth
+services. A default based on `--call` would need a brittle, per-service method
+allowlist that changes with each upstream API. System services are privileged
+and every application needs a different subset, so the library requires
+explicit rules instead of shipping a common preset.
+
+### Adding system-bus access
+
+Use `bwrap_dbus_system_filtered ARRAY RULE...` and pass only the rules the
+application needs. It accepts the same `xdg-dbus-proxy` rules as
 `bwrap_dbus_filtered` (`--talk`, `--see`, `--own`, `--call`, `--broadcast`) and
 loads no default rules. It binds the proxy at the standard system socket and
 sets `DBUS_SYSTEM_BUS_ADDRESS`, so applications that use the default address
-work without extra setup. System services are privileged, so grant only the
-names and methods the application needs. Do not combine it with
-`bwrap_dbus_system` for the same sandbox.
+work without extra setup. Do not combine it with `bwrap_dbus_system` for the
+same sandbox. Prefer `--call` over full `--talk` where the installed
+`xdg-dbus-proxy` supports it.
+
+Typical additions:
+
+| Application type | Rules to consider |
+|---|---|
+| Media player or browser | `logind` inhibit calls and `UPower` property reads; avoid power-off/suspend methods |
+| File manager or disk utility | `UDisks2` enumeration; add mount/eject calls only when required |
+| Network or VPN applet | `NetworkManager`; add `ModemManager1` for mobile broadband |
+| Bluetooth applet or audio | `org.bluez`; add pairing/connect calls only when required |
+| Audio application or DAW | `RealtimeKit1` |
+| System settings | `hostname1`, `timedate1`, `locale1` read-only calls first |
+| Software updater | Prefer host-side `PackageKit`, `fwupd`, or `systemd1`; do not expose them to a general-purpose sandbox |
+| Virtual machine manager | Keep `org.libvirt` outside the sandbox |
+| Authentication or policy | Keep `PolicyKit1` and `fprintd` out of the sandbox; use host-side agents |
 
 When using filtered D-Bus, wrappers must call `bwrap_exec` instead of
 `exec bwrap` to ensure proxy cleanup.

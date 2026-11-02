@@ -1198,6 +1198,25 @@ fi
 has_arg DSESS_LINES "${XDG_RUNTIME_DIR}/bus" && ok "session filtered binds the session bus socket" || fail "session filtered missing bus bind"
 has_triple DSESS_LINES "--setenv" "DBUS_SESSION_BUS_ADDRESS" "unix:path=${XDG_RUNTIME_DIR}/bus" && ok "session filtered exports the session bus address" || fail "session filtered missing bus env"
 
+DC_RULES_FILE="${TMPDIR_TEST}/dbus-common-rules"
+DC_DEFAULT=()
+(
+    bwrap_dbus_filtered() {
+        printf '%s\n' "$@" > "$DC_RULES_FILE"
+    }
+    bwrap_dbus_common DC_DEFAULT
+)
+DC_RULES_RC=$?
+DC_RULES_LINES=()
+[[ -f "$DC_RULES_FILE" ]] && mapfile -t DC_RULES_LINES < "$DC_RULES_FILE"
+if [[ $DC_RULES_RC -eq 0 && ${#DC_RULES_LINES[@]} -gt 0 ]]; then
+    ok "dbus_common default rules are captured"
+else
+    fail "dbus_common default rules empty (rc=$DC_RULES_RC)"
+fi
+has_arg DC_RULES_LINES "--talk=org.freedesktop.portal.Desktop" && ok "dbus_common keeps session portal defaults" || fail "dbus_common missing portal default"
+has_arg DC_RULES_LINES "--talk=org.freedesktop.login1" && fail "dbus_common still grants system-bus login1" || ok "dbus_common omits system-bus login1"
+
 DC=()
 PATH="$EMPTY_PATH" DBUS_SESSION_BUS_ADDRESS="$NO_PROXY_ADDR" bwrap_dbus_common DC 2>/dev/null
 DC_RC=$?

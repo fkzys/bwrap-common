@@ -974,7 +974,6 @@ _dbus_gui_service_rules() {
     _gr+=(--talk=org.freedesktop.Notifications)
     _gr+=(--talk=org.kde.StatusNotifierWatcher)
     _gr+=(--talk=org.freedesktop.ScreenSaver)
-    _gr+=(--talk=org.freedesktop.login1)
     _gr+=(--talk=org.a11y.Bus)
 }
 
