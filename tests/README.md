@@ -136,8 +136,11 @@ with an empty `PATH` so `xdg-dbus-proxy` is unavailable:
 - against the real `xdg-dbus-proxy` — a hard dependency of the suite, installed
   by CI — the full `bwrap_dbus_system_filtered` path is exercised: the proxy
   starts, the socket appears, `/proc/<pid>/cmdline` shows `--filter` and the
-  forwarded rules, cleanup removes the socket, and a bare `--call=NAME` makes
-  the proxy exit so the function returns 1. If `xdg-dbus-proxy` is missing the
+  forwarded rules, cleanup removes the socket, and a bare `--call=NAME` —
+  against the same bus address as the successful run — takes the fail-fast
+  path: the proxy exits early (not a socket timeout) so the function returns 1;
+  the valid-rule control run is what attributes the rejection to the bare
+  `--call` rather than to the bus address. If `xdg-dbus-proxy` is missing the
   test fails instead of skipping
 
 ### Architecture table cross-check (`arch-table-check.sh`)

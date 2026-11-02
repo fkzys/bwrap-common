@@ -182,6 +182,10 @@ else
     has_arg RP_LINES "--talk=org.example.X" && ok "real proxy receives extra rules" || fail "real proxy missing extra rules"
     [[ -f "$RP_GONE" ]] && ok "cleanup removes the proxy socket" || fail "cleanup left the proxy socket"
 
+    # Control is the successful run above: identical bus address, valid
+    # --call=NAME=*. This run alone proves only the fail-fast mechanism (early
+    # exit, not a socket timeout); the address cannot be the cause, so the bare
+    # --call must be, and the two runs together pin the rejection on the rule.
     RP_BAD_ERR="${TMPDIR_TEST}/real-bad-call.err"
     (
         DSRB=()
@@ -192,7 +196,7 @@ else
     RP_BAD_RC=$?
     [[ $RP_BAD_RC -eq 1 ]] && ok "real proxy rejects --call=NAME without a rule" || fail "invalid --call unexpectedly accepted (rc=$RP_BAD_RC)"
     if grep -q "proxy exited prematurely" "$RP_BAD_ERR" && ! grep -q "timeout waiting for proxy socket" "$RP_BAD_ERR"; then
-        ok "rejection is an early proxy exit, not a socket timeout"
+        ok "fail-fast: proxy exits early rather than timing out on the socket"
     else
         fail "bare --call did not fail via early proxy exit: $(tr '\n' ' ' < "$RP_BAD_ERR")"
     fi
