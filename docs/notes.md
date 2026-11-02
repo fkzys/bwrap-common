@@ -185,9 +185,9 @@ the other execution-domain rules remain blocked:
 bwrap_seccomp A default "personality ALLOW a0 == 1"
 ```
 
-`ALLOW` is a valid action in extra rules. In `--strict` mode an `ALLOW` rule
-that removes a matching default deny prints a warning. In the base
-`default.conf`, `--strict` rejects `ALLOW`.
+`ALLOW` is a valid action in extra rules. An extra `ALLOW` rule that removes a
+matching default deny prints a warning. In the base `default.conf`, `--strict`
+rejects `ALLOW`.
 `bwrap_gui_finish` still accepts only `default`/`none`, so extra rules go through
 `bwrap_seccomp` directly.
 
@@ -201,8 +201,10 @@ architecture switch produces a new entry:
 - default: `sha256("bwrap-common-seccomp-default-v4\n<genver>\nstrict\n<arch>\n<default_conf_sha256>\n")`
 - default+extra: `sha256("bwrap-common-seccomp-default-extra-v4\n<genver>\nstrict\n<arch>\n<default_conf_sha256>\n<extra_spec>\n")`
 
-Each cached filter has a `.sha256` sidecar; a checksum mismatch discards the
-entry and recompiles it. The generator reports version 4. The cache is
+Each cached filter has a `.sha256` sidecar; a checksum mismatch recompiles the
+entry. The sidecar is installed before the filter, and invalid entries are
+overwritten rather than removed, so concurrent writers cannot delete a fresh
+entry. The generator reports version 4. The cache is
 host-side and trusted; the key and checksum catch stale or corrupted outputs,
 not a malicious writer. If the cache directory is unavailable, `bwrap_seccomp`
 warns once per cache directory and compiles into a temporary file in

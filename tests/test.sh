@@ -206,6 +206,14 @@ section "Source guard"
 . ./bwrap-common.sh
 ok "re-source does not error"
 
+(
+    unset _BWRAP_COMMON_LOADED _BWRAP_SECCOMP_WARNED_CACHES
+    _source_in_function() { . ./bwrap-common.sh; }
+    _source_in_function
+    declare -p _BWRAP_SECCOMP_WARNED_CACHES >/dev/null 2>&1
+) && ok "global warning cache survives source from a function" ||
+    fail "warning cache was local to the sourcing function"
+
 # ── Function definitions ───────────────────────────────────
 
 section "Function definitions"
@@ -729,7 +737,7 @@ if [[ -n "$DEFAULT_CACHE_BLOB" ]]; then
     SB3_RC=$?
     GEN_CALLS=$(wc -c < "$GEN_COUNTER" 2>/dev/null || echo 0)
     if [[ $SB3_RC -eq 0 && ${#SB3[@]} -eq 2 && "$GEN_CALLS" -eq 2 ]]; then
-        ok "corrupt cache is detected and recompiled"
+        ok "corrupt .bpf with sidecar is recompiled"
     else
         fail "corrupt cache rc=$SB3_RC generator_calls=$GEN_CALLS"
     fi
@@ -754,6 +762,31 @@ if [[ $GV1_RC -eq 0 && $GV2_RC -eq 0 && "$GEN_CALLS" -eq 2 ]]; then
     ok "generator version changes the cache key"
 else
     fail "generator version cache rc=$GV1_RC/$GV2_RC calls=$GEN_CALLS"
+fi
+
+CONC_CACHE="${TMPDIR_TEST}/cache-concurrent"
+rm -rf "$CONC_CACHE"
+CONC_PIDS=()
+for _i in 1 2 3 4; do
+    (
+        CONC_OUT=()
+        BWRAP_SECCOMP_CACHE_DIR="$CONC_CACHE" bwrap_seccomp CONC_OUT default
+        _rc=$?
+        [[ $_rc -eq 0 && ${#CONC_OUT[@]} -eq 2 ]] || exit 1
+        _bwrap_seccomp_close_fds
+    ) &
+    CONC_PIDS+=("$!")
+done
+CONC_RC=0
+for _pid in "${CONC_PIDS[@]}"; do
+    wait "$_pid" || CONC_RC=1
+done
+CONC_BPF=$(find "$CONC_CACHE" -name '*.bpf' -type f | head -n1)
+if [[ $CONC_RC -eq 0 && -n "$CONC_BPF" && -f "${CONC_BPF}.sha256" ]] &&
+    _bwrap_seccomp_cache_valid "$CONC_BPF"; then
+    ok "concurrent cache writers leave a valid entry"
+else
+    fail "concurrent cache writers left rc=$CONC_RC entry=${CONC_BPF:-none}"
 fi
 
 SECCOMP_FD="${SB[1]:-}"

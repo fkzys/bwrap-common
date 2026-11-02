@@ -320,7 +320,7 @@ bwrap_sandbox() {
 # ── seccomp filters ─────────────────────────────────────────
 _BWRAP_SECCOMP_FDS=()
 _BWRAP_SECCOMP_TMP_FILES=()
-declare -A _BWRAP_SECCOMP_WARNED_CACHES=()
+declare -gA _BWRAP_SECCOMP_WARNED_CACHES=()
 
 # bwrap_seccomp ARRAYNAME MODE [EXTRA_RULE...]
 #   none     no seccomp filter
@@ -417,6 +417,9 @@ _bwrap_seccomp_tmp_add() {
 
 _bwrap_seccomp_tmp_remove() {
     local _tmp="$1" _keep=() _file
+    if (( ${#_BWRAP_SECCOMP_TMP_FILES[@]} == 0 )); then
+        return 0
+    fi
     for _file in "${_BWRAP_SECCOMP_TMP_FILES[@]}"; do
         [[ "$_file" == "$_tmp" ]] || _keep+=("$_file")
     done
@@ -425,6 +428,9 @@ _bwrap_seccomp_tmp_remove() {
 
 _bwrap_seccomp_tmp_cleanup() {
     local _file
+    if (( ${#_BWRAP_SECCOMP_TMP_FILES[@]} == 0 )); then
+        return 0
+    fi
     for _file in "${_BWRAP_SECCOMP_TMP_FILES[@]}"; do
         rm -f -- "$_file"
     done
@@ -686,7 +692,6 @@ _bwrap_seccomp_prepare() {
             return 0
         fi
         echo "bwrap_seccomp: cached filter failed validation, recompiling: $_cache_file" >&2
-        rm -f -- "$_cache_file" "${_cache_file}.sha256"
     fi
 
     if _bwrap_seccomp_cache_ready "$_cache"; then
@@ -701,8 +706,8 @@ _bwrap_seccomp_prepare() {
         if _bwrap_seccomp_compile "$_kind" "$_payload" "$_tmp"; then
             chmod 600 "$_tmp" 2>/dev/null || true
             if _bwrap_seccomp_write_sum "$_tmp" "$_sum" &&
-                mv -f "$_tmp" "$_cache_file" &&
-                mv -f "$_sum" "${_cache_file}.sha256"; then
+                mv -f "$_sum" "${_cache_file}.sha256" &&
+                mv -f "$_tmp" "$_cache_file"; then
                 chmod 600 "$_cache_file" "${_cache_file}.sha256" 2>/dev/null || true
                 _bwrap_seccomp_tmp_remove "$_tmp"
                 _bwrap_seccomp_tmp_remove "$_sum"
@@ -710,7 +715,7 @@ _bwrap_seccomp_prepare() {
                 _prep_temp=0
                 return 0
             fi
-            rm -f -- "$_tmp" "$_sum" "$_cache_file" "${_cache_file}.sha256"
+            rm -f -- "$_tmp" "$_sum"
             _bwrap_seccomp_tmp_remove "$_tmp"
             _bwrap_seccomp_tmp_remove "$_sum"
             _bwrap_seccomp_warn_cache "$_cache"

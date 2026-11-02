@@ -480,8 +480,7 @@ static int parse_rules(const char *path, int merge, uint32_t arch,
 			else
 				rule_remove_cond(*rules, count, nr, &cmp);
 
-			if (strict_mode && action == SCMP_ACT_ALLOW &&
-			    *count < before)
+			if (action == SCMP_ACT_ALLOW && *count < before)
 				fprintf(stderr,
 					"%s: warning: extra rule for '%s' overrides a default deny with ALLOW\n",
 					PROG, systok);
@@ -803,6 +802,9 @@ int main(int argc, char **argv)
 		usage("--extra requires --blocklist");
 	if (extra && allowlist)
 		usage("--extra is not valid with --allowlist");
+	if (blocklist && extra && strcmp(blocklist, "-") == 0 &&
+	    strcmp(extra, "-") == 0)
+		usage("--blocklist - and --extra - cannot both read stdin");
 	if (strict && !blocklist)
 		usage("--strict requires --blocklist");
 	if (!out)

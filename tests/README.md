@@ -83,9 +83,10 @@ shell-side logic without loading a real filter into the kernel:
   and reuses the cache on the next call
 - a missing config, a wrong-size filter output, or a wrong-arch filter output
   fails closed and appends nothing
-- cached filters have a `.sha256` sidecar; a modified filter with a valid size
-  and arch header is detected and recompiled
+- cached filters have a `.sha256` sidecar; a modified `.bpf` with a valid size
+  and arch header but a stale sidecar is detected and recompiled
 - changing the generator `--version` changes the cache key and forces a rebuild
+- four concurrent cache writers all succeed and leave one valid checksummed entry
 - default+extra appends one `--seccomp` (never `--add-seccomp-fd`), passes the
   user rules through `--extra -`, compiles once, reuses the cache, and closes
   the descriptor on cleanup
@@ -144,9 +145,10 @@ the configured errno; the probe also checks the argument-conditioned rules
 domains vs. `PER_LINUX`/`PER_LINUX32`). It also builds one `default + extra`
 filter with `ptrace ALLOW`, `personality ALLOW a0 == 1`, and `getppid EPERM`,
 then checks that the user rules replace the matching defaults while an
-unrelated `personality` condition remains blocked. It also checks that strict
-mode rejects `ALLOW` in the base blocklist and warns when an extra `ALLOW`
-removes a default deny. A canary aborts before any blocked syscall if the
+unrelated `personality` condition remains blocked. It also checks that extra
+`ALLOW` warns when it removes a default deny, that strict mode rejects `ALLOW`
+in the base blocklist, and that the generator rejects using stdin for both
+`--blocklist` and `--extra`. A canary aborts before any blocked syscall if the
 filter is not active, and the script fails if a rule has no corresponding test.
 It requires `bwrap`, the `libseccomp` headers, `cc`, and `make`.
 

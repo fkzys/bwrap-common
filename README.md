@@ -133,14 +133,14 @@ blocklist rules can be merged into the default filter with
 
 ## Dependencies
 
-- `bubblewrap` (`bwrap`)
+- `bubblewrap`
 - `bash`
-- `libseccomp` (runtime, for the seccomp generator)
-- `gcc` + `libseccomp` headers (build-time, for the seccomp generator)
+- `libseccomp`
+- `gcc`
 - [verify-lib](https://github.com/fkzys/verify-lib) (recommended, for integrity verification before sourcing)
-- `xdg-dbus-proxy` (required for the default `filtered` D-Bus mode; optional with `dbus=none`/`unfiltered`)
+- `xdg-dbus-proxy` (required for the default `filtered` D-Bus mode)
 
-- [hardened_malloc](https://github.com/fkzys/hardened_malloc) (required by default; opt out with `malloc=no` if it is not installed)
+- [hardened_malloc](https://github.com/fkzys/hardened_malloc) (required by default; opt out with `malloc=no`)
 
 ## License
 

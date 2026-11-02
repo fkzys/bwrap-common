@@ -785,13 +785,20 @@ fi
 printf 'ptrace EPERM\n' >"$_tmp/extra-base.conf"
 printf 'ptrace ALLOW\n' >"$_tmp/extra.rules"
 if ! "$BWRAP_SECCOMP_GEN" --blocklist "$_tmp/extra-base.conf" \
-        --extra "$_tmp/extra.rules" --strict -o "$_tmp/extra-allow.bpf" \
+        --extra "$_tmp/extra.rules" -o "$_tmp/extra-allow.bpf" \
         2>"$_tmp/extra-allow.err"; then
     echo "seccomp-check: extra ALLOW rule was rejected" >&2
     exit 1
 fi
 if ! grep -q "overrides a default deny with ALLOW" "$_tmp/extra-allow.err"; then
     echo "seccomp-check: extra ALLOW override did not warn" >&2
+    exit 1
+fi
+
+if printf 'getppid EPERM\n' |
+        "$BWRAP_SECCOMP_GEN" --blocklist - --extra - -o "$_tmp/two-stdin.bpf" \
+        2>/dev/null; then
+    echo "seccomp-check: generator accepted two stdin inputs" >&2
     exit 1
 fi
 
