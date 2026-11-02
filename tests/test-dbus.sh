@@ -152,43 +152,44 @@ has_arg DSYS_LINES "/run/dbus" && ok "system filtered creates /run/dbus" || fail
 has_arg DSYS_LINES "/run/dbus/system_bus_socket" && ok "system filtered binds the system bus socket" || fail "system filtered missing system bus bind"
 has_triple DSYS_LINES "--setenv" "DBUS_SYSTEM_BUS_ADDRESS" "unix:path=/run/dbus/system_bus_socket" && ok "system filtered exports the system bus address" || fail "system filtered missing system bus env"
 
-# Real proxy start and cleanup: the fake xdg-dbus-proxy records argv and creates
-# the socket, so the unfaked _bwrap_dbus_proxy_start path (including --filter) and
-# socket cleanup are exercised.  Requires python3 to create a unix socket.
-REAL_PROXY_BIN="${TMPDIR_TEST}/real-proxy-bin"
-mkdir -p "$REAL_PROXY_BIN"
-cat > "${REAL_PROXY_BIN}/xdg-dbus-proxy" <<'PROXY'
-#!/bin/sh
-printf '%s\n' "$@" > "$RECORD_ARGS"
-exec python3 -c 'import socket,sys,time; s=socket.socket(socket.AF_UNIX); s.bind(sys.argv[1]); s.listen(1); time.sleep(30)' "$2"
-PROXY
-chmod +x "${REAL_PROXY_BIN}/xdg-dbus-proxy"
-
-if command -v python3 >/dev/null 2>&1; then
-    RS_PRESENT="${TMPDIR_TEST}/system-real-sock-present"
-    RS_GONE="${TMPDIR_TEST}/system-real-sock-gone"
-    RS_ARGS="${TMPDIR_TEST}/system-real-proxy-args"
+# Real xdg-dbus-proxy is a hard test dependency: these proxy tests must fail,
+# not skip, when it is missing.
+if ! command -v xdg-dbus-proxy >/dev/null 2>&1; then
+    fail "xdg-dbus-proxy is required for the D-Bus proxy tests"
+else
+    RP_PRESENT="${TMPDIR_TEST}/real-sock-present"
+    RP_GONE="${TMPDIR_TEST}/real-sock-gone"
+    RP_CMDLINE="${TMPDIR_TEST}/real-proxy-cmdline"
     (
-        export RECORD_ARGS="$RS_ARGS"
-        DSWR=()
-        PATH="${REAL_PROXY_BIN}:${PATH}" DBUS_SYSTEM_BUS_ADDRESS="unix:path=/nonexistent" \
-            bwrap_dbus_system_filtered DSWR --call=org.freedesktop.UPower
+        DSR=()
+        DBUS_SYSTEM_BUS_ADDRESS="unix:path=/nonexistent" \
+            bwrap_dbus_system_filtered DSR --call=org.freedesktop.UPower=* --talk=org.example.X
         _rc=$?
-        _lines=()
-        [[ -f "$RS_ARGS" ]] && mapfile -t _lines < "$RS_ARGS"
-        _sock="${_lines[1]:-}"
-        [[ -n "$_sock" && -S "$_sock" ]] && : > "$RS_PRESENT"
+        _pid="${_BWRAP_DBUS_PROXY_PIDS[${#_BWRAP_DBUS_PROXY_PIDS[@]}-1]:-}"
+        _sock="${_BWRAP_DBUS_PROXY_SOCKETS[${#_BWRAP_DBUS_PROXY_SOCKETS[@]}-1]:-}"
+        [[ -n "$_pid" && -r "/proc/$_pid/cmdline" ]] && tr '\0' '\n' < "/proc/$_pid/cmdline" > "$RP_CMDLINE"
+        [[ -n "$_sock" && -S "$_sock" ]] && : > "$RP_PRESENT"
         _bwrap_dbus_cleanup
-        [[ -n "$_sock" && ! -e "$_sock" ]] && : > "$RS_GONE"
+        [[ -n "$_sock" && ! -e "$_sock" ]] && : > "$RP_GONE"
         exit "$_rc"
-    )
-    RS_RC=$?
-    RS_LINES=()
-    [[ -f "$RS_ARGS" ]] && mapfile -t RS_LINES < "$RS_ARGS"
-    [[ $RS_RC -eq 0 && -f "$RS_PRESENT" ]] && ok "real proxy start waits for the socket" || fail "real proxy start rc=$RS_RC"
-    has_arg RS_LINES "--filter" && ok "real proxy receives --filter" || fail "real proxy missing --filter"
-    has_arg RS_LINES "--call=org.freedesktop.UPower" && ok "real proxy forwards the rule" || fail "real proxy missing rule"
-    [[ -f "$RS_GONE" ]] && ok "cleanup removes the proxy socket" || fail "cleanup left the proxy socket"
+    ) >/dev/null 2>&1
+    RP_RC=$?
+    RP_LINES=()
+    [[ -f "$RP_CMDLINE" ]] && mapfile -t RP_LINES < "$RP_CMDLINE"
+    [[ $RP_RC -eq 0 && -f "$RP_PRESENT" ]] && ok "real system proxy start waits for the socket" || fail "real system proxy start rc=$RP_RC"
+    has_arg RP_LINES "--filter" && ok "real proxy started with --filter" || fail "real proxy missing --filter"
+    has_arg RP_LINES "--call=org.freedesktop.UPower=*" && ok "real proxy receives the call rule" || fail "real proxy missing the call rule"
+    has_arg RP_LINES "--talk=org.example.X" && ok "real proxy receives extra rules" || fail "real proxy missing extra rules"
+    [[ -f "$RP_GONE" ]] && ok "cleanup removes the proxy socket" || fail "cleanup left the proxy socket"
+
+    (
+        DSRB=()
+        DBUS_SYSTEM_BUS_ADDRESS="unix:path=/nonexistent" \
+            bwrap_dbus_system_filtered DSRB --call=org.freedesktop.UPower
+        exit $?
+    ) >/dev/null 2>&1
+    RP_BAD_RC=$?
+    [[ $RP_BAD_RC -eq 1 ]] && ok "real proxy rejects --call=NAME without a rule" || fail "invalid --call unexpectedly accepted (rc=$RP_BAD_RC)"
 fi
 
 

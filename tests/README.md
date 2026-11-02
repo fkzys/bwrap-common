@@ -133,10 +133,12 @@ with an empty `PATH` so `xdg-dbus-proxy` is unavailable:
   `_bwrap_dbus_proxy_start` stubbed it resolves the system bus address, forwards
   rules, creates `/run/dbus`, binds the proxy at the standard system socket, and
   sets `DBUS_SYSTEM_BUS_ADDRESS`
-- with a fake `xdg-dbus-proxy` that records its argv and creates the socket
-  (requires `python3`), the real `_bwrap_dbus_proxy_start` path is exercised:
-  the proxy is passed `--filter` and the rules, the wait-for-socket succeeds,
-  and `_bwrap_dbus_cleanup` removes the socket
+- against the real `xdg-dbus-proxy` — a hard dependency of the suite, installed
+  by CI — the full `bwrap_dbus_system_filtered` path is exercised: the proxy
+  starts, the socket appears, `/proc/<pid>/cmdline` shows `--filter` and the
+  forwarded rules, cleanup removes the socket, and a bare `--call=NAME` makes
+  the proxy exit so the function returns 1. If `xdg-dbus-proxy` is missing the
+  test fails instead of skipping
 
 ### Architecture table cross-check (`arch-table-check.sh`)
 
@@ -182,7 +184,8 @@ It requires `bwrap`, the `libseccomp` headers, `cc`, and `make`.
 
 The GitHub Actions workflow (`.github/workflows/ci.yml`) runs on push/PR when `bwrap-common.sh`, `bwrap-common-*.sh`, `tests/**`, `seccomp/**`, `tools/**`, `Makefile`, or the workflow file itself changes:
 
-- **`shellcheck`** job: runs `shellcheck` with `-s bash` on the library entry point, both modules, and all `tests/*.sh`; suppressed informational codes are `SC2034`, `SC2178`, `SC2317`, plus `SC1091`, `SC2015`, `SC2030`, `SC2031`, `SC2329` for the test scripts' idioms
+- **`shellcheck`** job: runs `shellcheck -s bash` twice — a strict pass over the library entry point and both modules (`-e SC2034,SC2178,SC2317`), and a relaxed pass over all `tests/*.sh` (`-e SC2034,SC2178,SC2317,SC1091,SC2015,SC2030,SC2031,SC2329` for the test scripts' idioms)
+- **`test`** job: installs `xdg-dbus-proxy` and runs `bash tests/test.sh`
 - **`test`** job: runs `bash tests/test.sh`
 - **`seccomp`** job: installs `bubblewrap`, `libseccomp-dev`, and `build-essential`, enables unprivileged user namespaces, and runs `tests/seccomp-check.sh`; it retries as root only when the script reports exit status `77` (sandbox environment unavailable), so real filter failures are not masked
 

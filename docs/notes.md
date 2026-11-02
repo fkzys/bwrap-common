@@ -173,7 +173,13 @@ explicit rules instead of shipping a common preset.
 Use `bwrap_dbus_system_filtered ARRAY RULE...` and pass only the rules the
 application needs. It accepts the same `xdg-dbus-proxy` rules as
 `bwrap_dbus_filtered` (`--talk`, `--see`, `--own`, `--call`, `--broadcast`) and
-loads no default rules. It binds the proxy at the standard system socket and
+loads no default rules. `--call` and `--broadcast` require an explicit rule:
+the option is `--call=NAME=RULE` / `--broadcast=NAME=RULE`, where `RULE` is
+`[METHOD][@PATH]` (`METHOD` is `*`, an interface, or a fully-qualified method;
+`PATH` is an object path). A bare `--call=NAME` is rejected by the proxy. For
+example `--call=org.freedesktop.UPower=*` or
+`--call=org.freedesktop.UPower=org.freedesktop.UPower.*@/org/freedesktop/UPower/*`.
+It binds the proxy at the standard system socket and
 sets `DBUS_SYSTEM_BUS_ADDRESS`, so applications that use the default address
 work without extra setup. Do not combine it with `bwrap_dbus_system` for the
 same sandbox. Prefer `--call` over full `--talk` where the installed
