@@ -7,43 +7,6 @@ _BWRAP_SECCOMP_FDS=()
 _BWRAP_SECCOMP_TMP_FILES=()
 declare -gA _BWRAP_SECCOMP_WARNED_CACHES=()
 
-# bwrap_seccomp ARRAYNAME MODE [EXTRA_RULE...]
-#   none     no seccomp filter
-#   default  compile seccomp/default.conf at runtime and cache the result
-#   default EXTRA_RULE...
-#            compile one combined default + extra blocklist filter; each
-#            EXTRA_RULE is a blocklist line ("syscall EPERM|ENOSYS|ALLOW [condition]")
-#            merged into the default filter (user rules win on duplicates)
-#   <spec>   syscall allowlist (space/comma separated), compiled on first use
-#            and cached like the other filters
-# Filters are cached under BWRAP_SECCOMP_CACHE_DIR.  If the cache is
-# unavailable the generator runs into a temporary file in XDG_RUNTIME_DIR
-# (tmpfs), which is opened and unlinked immediately; when that is unavailable
-# too, the function fails closed.
-# Env vars:
-#   BWRAP_SECCOMP_CONF       default blocklist source
-#                            (${BWRAP_SECCOMP_DIR}/default.conf)
-#   BWRAP_SECCOMP_DIR        default seccomp source dir (/usr/lib/bwrap-common/seccomp)
-#   BWRAP_SECCOMP_GEN        rule compiler (/usr/lib/bwrap-common/bwrap-seccomp-gen)
-#   BWRAP_SECCOMP_CACHE_DIR  compiled filter cache (~/.cache/bwrap-common/seccomp)
-#   BWRAP_SECCOMP_ARCH       override uname -m (cross-arch testing)
-bwrap_seccomp() {
-    local _arrname="$1" _mode="$2"
-    case "$_mode" in
-        none)
-            return 0
-            ;;
-        default)
-            _bwrap_seccomp_default "$_arrname" "${@:3}"
-            return $?
-            ;;
-        *)
-            _bwrap_seccomp_allowlist "$_arrname" "$_mode"
-            return $?
-            ;;
-    esac
-}
-
 # Internal: report a seccomp setup problem.
 _bwrap_seccomp_fail() {
     echo "bwrap_seccomp: $1" >&2

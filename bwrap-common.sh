@@ -200,6 +200,119 @@ bwrap_dbus_system() {
     fi
 }
 
+# ── D-Bus filtered proxy ─────────────────────────────────────
+# Start a filtered session bus proxy and bind its socket into the sandbox.
+# Must be paired with bwrap_exec (not raw `exec bwrap`).
+bwrap_dbus_filtered() {
+    local _arrname="$1"; shift
+    local -n _df="$_arrname"
+
+    if ! command -v xdg-dbus-proxy >/dev/null 2>&1; then
+        echo "bwrap_dbus_filtered: xdg-dbus-proxy not found (required for filtered D-Bus)" >&2
+        return 1
+    fi
+
+    local bus_addr="${DBUS_SESSION_BUS_ADDRESS:-}"
+    if [[ -z "$bus_addr" ]]; then
+        if [[ -S "${XDG_RUNTIME_DIR}/bus" ]]; then
+            bus_addr="unix:path=${XDG_RUNTIME_DIR}/bus"
+        else
+            echo "bwrap_dbus_filtered: no session bus found, skipping" >&2
+            return 0
+        fi
+    fi
+
+    local proxy_sock="${XDG_RUNTIME_DIR}/bwrap-dbus-proxy-$$-${RANDOM}.sock"
+    _bwrap_dbus_proxy_start bwrap_dbus_filtered "$bus_addr" "$proxy_sock" "$@" || return $?
+
+    _df+=(
+        --bind "$proxy_sock" "${XDG_RUNTIME_DIR}/bus"
+        --setenv DBUS_SESSION_BUS_ADDRESS "unix:path=${XDG_RUNTIME_DIR}/bus"
+    )
+}
+
+# Start a filtered system bus proxy and bind it at the standard system socket.
+# RULES are passed to xdg-dbus-proxy; no default rules are loaded.
+# Do not combine with bwrap_dbus_system for the same sandbox.
+bwrap_dbus_system_filtered() {
+    local _arrname="$1"; shift
+    local -n _ds="$_arrname"
+
+    if ! command -v xdg-dbus-proxy >/dev/null 2>&1; then
+        echo "bwrap_dbus_system_filtered: xdg-dbus-proxy not found (required for filtered D-Bus)" >&2
+        return 1
+    fi
+
+    local bus_addr="${DBUS_SYSTEM_BUS_ADDRESS:-}"
+    if [[ -z "$bus_addr" ]]; then
+        if [[ -S /run/dbus/system_bus_socket ]]; then
+            bus_addr="unix:path=/run/dbus/system_bus_socket"
+        else
+            echo "bwrap_dbus_system_filtered: no system bus found, skipping" >&2
+            return 0
+        fi
+    fi
+
+    local proxy_sock="${XDG_RUNTIME_DIR}/bwrap-system-bus-proxy-$$-${RANDOM}.sock"
+    _bwrap_dbus_proxy_start bwrap_dbus_system_filtered "$bus_addr" "$proxy_sock" "$@" || return $?
+
+    _ds+=(
+        --perms 0755 --dir /run
+        --perms 0755 --dir /run/dbus
+        --bind "$proxy_sock" /run/dbus/system_bus_socket
+        --setenv DBUS_SYSTEM_BUS_ADDRESS "unix:path=/run/dbus/system_bus_socket"
+    )
+}
+
+# Filtered D-Bus for typical GUI apps (portals + common services).
+# Usage: bwrap_dbus_common ARRAYNAME [EXTRA_RULES...]
+bwrap_dbus_common() {
+    local _arrname="$1"; shift
+    local rules=()
+    _dbus_portal_rules rules
+    _dbus_gui_service_rules rules
+    rules+=("$@")
+    bwrap_dbus_filtered "$_arrname" "${rules[@]}"
+}
+
+# ── seccomp filter ───────────────────────────────────────────
+# bwrap_seccomp ARRAYNAME MODE [EXTRA_RULE...]
+#   none     no seccomp filter
+#   default  compile seccomp/default.conf at runtime and cache the result
+#   default EXTRA_RULE...
+#            compile one combined default + extra blocklist filter; each
+#            EXTRA_RULE is a blocklist line ("syscall EPERM|ENOSYS|ALLOW [condition]")
+#            merged into the default filter (user rules win on duplicates)
+#   <spec>   syscall allowlist (space/comma separated), compiled on first use
+#            and cached like the other filters
+# Filters are cached under BWRAP_SECCOMP_CACHE_DIR.  If the cache is
+# unavailable the generator runs into a temporary file in XDG_RUNTIME_DIR
+# (tmpfs), which is opened and unlinked immediately; when that is unavailable
+# too, the function fails closed.
+# Env vars:
+#   BWRAP_SECCOMP_CONF       default blocklist source
+#                            (${BWRAP_SECCOMP_DIR}/default.conf)
+#   BWRAP_SECCOMP_DIR        default seccomp source dir (/usr/lib/bwrap-common/seccomp)
+#   BWRAP_SECCOMP_GEN        rule compiler (/usr/lib/bwrap-common/bwrap-seccomp-gen)
+#   BWRAP_SECCOMP_CACHE_DIR  compiled filter cache (~/.cache/bwrap-common/seccomp)
+#   BWRAP_SECCOMP_ARCH       override uname -m (cross-arch testing)
+bwrap_seccomp() {
+    local _arrname="$1" _mode="$2"
+    case "$_mode" in
+        none)
+            return 0
+            ;;
+        default)
+            _bwrap_seccomp_default "$_arrname" "${@:3}"
+            return $?
+            ;;
+        *)
+            _bwrap_seccomp_allowlist "$_arrname" "$_mode"
+            return $?
+            ;;
+    esac
+}
+
 # ── Optional read-only home paths (themes, fonts, Qt) ─────────
 bwrap_themes() {
     local -n _arr=$1
