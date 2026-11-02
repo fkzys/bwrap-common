@@ -25,6 +25,10 @@ test:
 	bash tests/test.sh
 
 install:
+	@if [ ! -f $(SECCOMP_GEN) ]; then \
+		echo "error: $(SECCOMP_GEN) not found; run 'make build' first" >&2; \
+		exit 1; \
+	fi
 	install -Dm644 bwrap-common.sh $(DESTDIR)$(PREFIX)/lib/bwrap-common/bwrap-common.sh
 	install -Dm644 bwrap-common-seccomp.sh $(DESTDIR)$(PREFIX)/lib/bwrap-common/bwrap-common-seccomp.sh
 	install -Dm644 bwrap-common-dbus.sh $(DESTDIR)$(PREFIX)/lib/bwrap-common/bwrap-common-dbus.sh

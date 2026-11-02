@@ -37,6 +37,7 @@ sudo make install
 `make build` builds only `build/bwrap-seccomp-gen`, the seccomp rule compiler.
 `make install` installs the library entry point and its two modules, the
 generator, and `seccomp/default.conf`; no BPF blob is generated or installed.
+It fails with an error if the generator has not been built yet.
 `gcc` and the `libseccomp` headers are required to build the generator.
 
 ### Uninstall
