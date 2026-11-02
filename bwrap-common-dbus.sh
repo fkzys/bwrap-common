@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # bwrap-common: filtered D-Bus proxy helpers.
-# Internal module sourced by bwrap-common.sh; do not source directly.
+# Loaded by bwrap-common.sh; do not source directly.
 
 # ══════════════════════════════════════════════════════════════
 # ── D-Bus filtered proxy ─────────────────────────────────────
@@ -47,7 +47,7 @@ _dbus_fcitx5_rules() {
     )
 }
 
-# Internal: start a filtered xdg-dbus-proxy and wait for its socket.
+# Start a filtered xdg-dbus-proxy and wait for its socket.
 # Usage: _bwrap_dbus_proxy_start LABEL BUS_ADDR PROXY_SOCK [RULES...]
 _bwrap_dbus_proxy_start() {
     local _label="$1" _bus_addr="$2" _proxy_sock="$3"
