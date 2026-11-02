@@ -47,7 +47,7 @@ static void usage(const char *msg)
 	if (msg)
 		fprintf(stderr, "%s: %s\n", PROG, msg);
 	fprintf(stderr,
-		"usage: %s --blocklist FILE [--extra FILE] [--arch ARCH] [--strict] -o OUT\n"
+		"usage: %s --blocklist FILE [--extra FILE|-] [--arch ARCH] [--strict] -o OUT\n"
 		"       %s --allowlist \"SPEC\" [--arch ARCH] -o OUT\n"
 		"       %s --version\n",
 		PROG, PROG, PROG);
@@ -355,9 +355,10 @@ static int parse_rules(const char *path, int merge, uint32_t arch,
 	size_t linecap = 0;
 	ssize_t nread;
 	FILE *f;
+	int close_file = strcmp(path, "-") != 0;
 	int rc = 0;
 
-	f = fopen(path, "r");
+	f = close_file ? fopen(path, "r") : stdin;
 	if (!f) {
 		fprintf(stderr, "%s: cannot open %s: %s\n",
 			PROG, path, strerror(errno));
@@ -460,15 +461,34 @@ static int parse_rules(const char *path, int merge, uint32_t arch,
 			cmp.datum_b = value & 0xffffffffU;
 		}
 
-		if (merge) {
-			if (!have_cond) {
-				rule_remove_nr(*rules, count, nr);
-				/* The default action is ALLOW already. */
-				if (action == SCMP_ACT_ALLOW)
-					continue;
-			} else {
-				rule_remove_cond(*rules, count, nr, &cmp);
+		if (!merge && action == SCMP_ACT_ALLOW) {
+			if (strict_mode) {
+				fprintf(stderr,
+					"%s: %s: ALLOW is only valid in --extra rules\n",
+					PROG, path);
+				rc = 1;
+				goto done;
 			}
+			continue;
+		}
+
+		if (merge) {
+			size_t before = *count;
+
+			if (!have_cond)
+				rule_remove_nr(*rules, count, nr);
+			else
+				rule_remove_cond(*rules, count, nr, &cmp);
+
+			if (strict_mode && action == SCMP_ACT_ALLOW &&
+			    *count < before)
+				fprintf(stderr,
+					"%s: warning: extra rule for '%s' overrides a default deny with ALLOW\n",
+					PROG, systok);
+
+			/* The default action is ALLOW already. */
+			if (!have_cond && action == SCMP_ACT_ALLOW)
+				continue;
 		}
 
 		if (rule_append(rules, count, cap, nr, action, have_cond,
@@ -481,7 +501,8 @@ static int parse_rules(const char *path, int merge, uint32_t arch,
 
 done:
 	free(line);
-	fclose(f);
+	if (close_file)
+		fclose(f);
 	return rc;
 }
 
@@ -770,7 +791,7 @@ int main(int argc, char **argv)
 		usage("unexpected positional argument");
 
 	if (version) {
-		puts("3");
+		puts("4");
 		return 0;
 	}
 

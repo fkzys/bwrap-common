@@ -178,31 +178,43 @@ appends a single `--seccomp FD`. User rules have priority over the base rules:
 - A conditional extra rule cannot override an unconditional default deny; the
   unconditional rule still dominates.
 
-`ALLOW` is a valid action in extra rules. `bwrap_gui_finish` still accepts only
-`default`/`none`, so extra rules go through `bwrap_seccomp` directly.
+For example, this replaces only the matching `personality a0 == 1` default rule;
+the other execution-domain rules remain blocked:
 
-Rules use `seccomp/default.conf` format: actions are `EPERM`, `ENOSYS`, or
-`ALLOW`, and argument conditions are supported.
+```sh
+bwrap_seccomp A default "personality ALLOW a0 == 1"
+```
 
-The default filter cache key hashes the architecture and the content of
-`default.conf`, so editing the config or switching architectures produces a new
-cache entry:
+`ALLOW` is a valid action in extra rules. In `--strict` mode an `ALLOW` rule
+that removes a matching default deny prints a warning. In the base
+`default.conf`, `--strict` rejects `ALLOW`.
+`bwrap_gui_finish` still accepts only `default`/`none`, so extra rules go through
+`bwrap_seccomp` directly.
 
-- default: `sha256("bwrap-common-seccomp-default-v3\n<arch>\n<default_conf_sha256>\n")`
-- default+extra: `sha256("bwrap-common-seccomp-default-extra-v3\n<arch>\n<default_conf_sha256>\n<extra_spec>\n")`
+Rules use `seccomp/default.conf` format: base actions are `EPERM` or `ENOSYS`,
+extra rules may also use `ALLOW`, and argument conditions are supported.
 
-The generator reports version 3. The cache is host-side and trusted, so no root
-cache is needed. If the cache directory is unavailable, `bwrap_seccomp` warns
-and compiles into a temporary file in `$XDG_RUNTIME_DIR` (tmpfs), opens it,
-unlinks it immediately, and passes `--seccomp FD`. If there is no writable
-runtime dir, it fails closed.
+Cache keys include the generator `--version`, filter mode, architecture, and
+the content of `default.conf`, so a generator upgrade, config edit, or
+architecture switch produces a new entry:
+
+- default: `sha256("bwrap-common-seccomp-default-v4\n<genver>\nstrict\n<arch>\n<default_conf_sha256>\n")`
+- default+extra: `sha256("bwrap-common-seccomp-default-extra-v4\n<genver>\nstrict\n<arch>\n<default_conf_sha256>\n<extra_spec>\n")`
+
+Each cached filter has a `.sha256` sidecar; a checksum mismatch discards the
+entry and recompiles it. The generator reports version 4. The cache is
+host-side and trusted; the key and checksum catch stale or corrupted outputs,
+not a malicious writer. If the cache directory is unavailable, `bwrap_seccomp`
+warns once per cache directory and compiles into a temporary file in
+`$XDG_RUNTIME_DIR` (tmpfs), opens it, unlinks it immediately, and passes
+`--seccomp FD`. If there is no writable runtime dir, it fails closed.
 
 `bwrap_seccomp A "openat read write"` compiles a syscall **allowlist** and
 caches the result with the same cache and tmpfs fallback machinery. Its cache
-key is `sha256("bwrap-common-seccomp-v3\n<arch>\n<spec>\n")`. Allowlist mode is
-fail-closed: an unknown syscall name, a missing generator, or a compile failure
-returns non-zero. It is a power-user API and is not accepted through
-`bwrap_gui_finish`, which only accepts `default`/`none`.
+key is `sha256("bwrap-common-seccomp-v4\n<genver>\nallowlist\n<arch>\n<spec>\n")`.
+Allowlist mode is fail-closed: an unknown syscall name, a missing generator, or
+a compile failure returns non-zero. It is a power-user API and is not accepted
+through `bwrap_gui_finish`, which only accepts `default`/`none`.
 
 The filter descriptor stays open so bwrap can inherit it. In proxy mode
 `bwrap_exec` closes the parent copy after starting bwrap; if you invoke `bwrap`

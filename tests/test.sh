@@ -156,6 +156,10 @@ GEN_COUNTER="${TMPDIR_TEST}/gen-count"
 cat > "$FAKE_GEN" <<'GEN'
 #!/usr/bin/env bash
 set -u
+if [[ "${1:-}" == "--version" ]]; then
+    printf '%s\n' "${FAKE_GEN_VERSION:-4}"
+    exit 0
+fi
 printf 'x' >> "${FAKE_GEN_COUNTER:?}"
 _out=""
 _extra=""
@@ -168,8 +172,16 @@ while (($#)); do
         *) shift ;;
     esac
 done
-if [[ -n "${FAKE_GEN_EXTRA_COPY:-}" && -n "$_extra" ]]; then
-    cp "$_extra" "$FAKE_GEN_EXTRA_COPY"
+if [[ -n "$_extra" ]]; then
+    if [[ -n "${FAKE_GEN_EXTRA_COPY:-}" ]]; then
+        if [[ "$_extra" == "-" ]]; then
+            cat > "$FAKE_GEN_EXTRA_COPY"
+        else
+            cp "$_extra" "$FAKE_GEN_EXTRA_COPY"
+        fi
+    elif [[ "$_extra" == "-" ]]; then
+        cat >/dev/null
+    fi
 fi
 [[ -n "$_out" ]] || exit 1
 cp "${FAKE_GEN_BLOB:?}" "$_out"
@@ -703,13 +715,57 @@ else
     fail "default cache rc=$SB2_RC generator_calls=$GEN_CALLS"
 fi
 
+DEFAULT_CACHE_BLOB=$(find "$BWRAP_SECCOMP_CACHE_DIR" -name '*.bpf' -type f | head -n1)
+if [[ -n "$DEFAULT_CACHE_BLOB" && -f "${DEFAULT_CACHE_BLOB}.sha256" ]]; then
+    ok "cached default filter has a checksum"
+else
+    fail "cached default filter checksum missing"
+fi
+
+SB3=()
+if [[ -n "$DEFAULT_CACHE_BLOB" ]]; then
+    printf '\x00' | dd of="$DEFAULT_CACHE_BLOB" bs=1 seek=8 conv=notrunc status=none
+    bwrap_seccomp SB3 default 2>/dev/null
+    SB3_RC=$?
+    GEN_CALLS=$(wc -c < "$GEN_COUNTER" 2>/dev/null || echo 0)
+    if [[ $SB3_RC -eq 0 && ${#SB3[@]} -eq 2 && "$GEN_CALLS" -eq 2 ]]; then
+        ok "corrupt cache is detected and recompiled"
+    else
+        fail "corrupt cache rc=$SB3_RC generator_calls=$GEN_CALLS"
+    fi
+else
+    fail "cannot test corrupt cache without a cached filter"
+fi
+
+VERSION_CACHE="${TMPDIR_TEST}/cache-gen-version"
+rm -rf "$VERSION_CACHE" "$GEN_COUNTER"
+GV1=()
+BWRAP_SECCOMP_CACHE_DIR="$VERSION_CACHE" \
+FAKE_GEN_VERSION=4 \
+bwrap_seccomp GV1 default
+GV1_RC=$?
+GV2=()
+BWRAP_SECCOMP_CACHE_DIR="$VERSION_CACHE" \
+FAKE_GEN_VERSION=5 \
+bwrap_seccomp GV2 default
+GV2_RC=$?
+GEN_CALLS=$(wc -c < "$GEN_COUNTER" 2>/dev/null || echo 0)
+if [[ $GV1_RC -eq 0 && $GV2_RC -eq 0 && "$GEN_CALLS" -eq 2 ]]; then
+    ok "generator version changes the cache key"
+else
+    fail "generator version cache rc=$GV1_RC/$GV2_RC calls=$GEN_CALLS"
+fi
+
 SECCOMP_FD="${SB[1]:-}"
 SECCOMP_FD2="${SB2[1]:-}"
+SECCOMP_FD3="${SB3[1]:-}"
 _bwrap_seccomp_close_fds
 if [[ -n "$SECCOMP_FD" ]] && { : <&"$SECCOMP_FD"; } 2>/dev/null; then
     fail "seccomp filter fd was left open"
 elif [[ -n "$SECCOMP_FD2" ]] && { : <&"$SECCOMP_FD2"; } 2>/dev/null; then
     fail "cached seccomp filter fd was left open"
+elif [[ -n "$SECCOMP_FD3" ]] && { : <&"$SECCOMP_FD3"; } 2>/dev/null; then
+    fail "recompiled seccomp filter fd was left open"
 else
     ok "seccomp filter fd is closed by cleanup"
 fi
@@ -859,6 +915,11 @@ bwrap_seccomp DE default "" 2>/dev/null
 DE_RC=$?
 [[ $DE_RC -eq 1 && ${#DE[@]} -eq 0 ]] && ok "empty extra blocklist fails closed" || fail "empty extra blocklist returned $DE_RC"
 
+DEW=()
+bwrap_seccomp DEW default " " 2>/dev/null
+DEW_RC=$?
+[[ $DEW_RC -eq 1 && ${#DEW[@]} -eq 0 ]] && ok "whitespace-only extra blocklist fails closed" || fail "whitespace-only extra blocklist returned $DEW_RC"
+
 DTF=()
 BWRAP_SECCOMP_GEN="$FAIL_GEN" bwrap_seccomp DTF default "kexec_load ENOSYS" 2>/dev/null
 DTF_RC=$?
@@ -899,6 +960,29 @@ if [[ -z "$(find "$RUNTIME_FALLBACK" -maxdepth 1 -name 'bwrap-seccomp.*' -print 
     ok "runtime fallback unlinks its temporary filter"
 else
     fail "runtime fallback left a temporary filter"
+fi
+
+DF2=()
+BWRAP_SECCOMP_CACHE_DIR="${BAD_CACHE_FILE}/cache" \
+XDG_RUNTIME_DIR="$RUNTIME_FALLBACK" \
+bwrap_seccomp DF2 default "getppid EPERM" 2>"${TMPDIR_TEST}/fallback2.err"
+DF2_RC=$?
+DF2_ERR=$(cat "${TMPDIR_TEST}/fallback2.err" 2>/dev/null)
+if [[ $DF2_RC -eq 0 && "$DF2_ERR" != *"seccomp cache unavailable"* ]]; then
+    ok "fallback warning is deduplicated"
+else
+    fail "fallback warning repeated or fallback failed: $DF2_ERR"
+fi
+
+DN=()
+BWRAP_SECCOMP_CACHE_DIR="${BAD_CACHE_FILE}/cache" \
+XDG_RUNTIME_DIR="${TMPDIR_TEST}/missing-runtime" \
+bwrap_seccomp DN default 2>/dev/null
+DN_RC=$?
+if [[ $DN_RC -eq 1 && ${#DN[@]} -eq 0 ]]; then
+    ok "missing runtime dir fails closed"
+else
+    fail "missing runtime dir returned $DN_RC"
 fi
 _bwrap_seccomp_close_fds
 

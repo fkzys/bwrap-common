@@ -72,25 +72,29 @@ Each function is called with a fresh empty array, then the array contents are in
 ### Seccomp filter tests
 
 The test harness creates a `default.conf` fixture, a 16-byte fake cBPF blob whose
-bytes 12–15 match the host architecture magic, and a fake generator that copies
-the blob to `-o` and records the `--extra` file. `BWRAP_SECCOMP_DIR` points at
-the fixture directory; `BWRAP_SECCOMP_CACHE_DIR` and `XDG_RUNTIME_DIR` are
-temporary. This exercises the shell-side logic without loading a real filter
-into the kernel:
+bytes 12–15 match the host architecture magic, and a fake generator that reports
+a configurable version, copies the blob to `-o`, and records rules read from
+`--extra -`. `BWRAP_SECCOMP_DIR` points at the fixture directory;
+`BWRAP_SECCOMP_CACHE_DIR` and `XDG_RUNTIME_DIR` are temporary. This exercises the
+shell-side logic without loading a real filter into the kernel:
 
 - `bwrap_seccomp A none` appends nothing and returns 0
 - `bwrap_seccomp A default` appends one `--seccomp <numeric fd>`, compiles once,
   and reuses the cache on the next call
 - a missing config, a wrong-size filter output, or a wrong-arch filter output
   fails closed and appends nothing
+- cached filters have a `.sha256` sidecar; a modified filter with a valid size
+  and arch header is detected and recompiled
+- changing the generator `--version` changes the cache key and forces a rebuild
 - default+extra appends one `--seccomp` (never `--add-seccomp-fd`), passes the
-  user rules through `--extra`, compiles once, reuses the cache, and closes the
-  descriptor on cleanup
-- an empty extra blocklist, an extra compile failure, and a pre-existing
-  `--seccomp` or `--add-seccomp-fd` argument all fail closed and leave the
-  array unchanged
-- an unavailable cache warns and falls back to a temporary filter in
-  `XDG_RUNTIME_DIR`; the temporary file is unlinked immediately
+  user rules through `--extra -`, compiles once, reuses the cache, and closes
+  the descriptor on cleanup
+- an empty or whitespace-only extra blocklist, an extra compile failure, and a
+  pre-existing `--seccomp` or `--add-seccomp-fd` argument all fail closed and
+  leave the array unchanged
+- an unavailable cache warns once per cache directory and falls back to a
+  temporary filter in `XDG_RUNTIME_DIR`; the temporary file is unlinked
+  immediately, and a missing runtime directory fails closed
 - architecture magic is checked in native byte order: a synthetic s390x
   big-endian filter (`80000016`) is accepted, the old little-endian value is
   rejected, and mips/mips64/parisc/ppc64 mappings are covered
@@ -140,10 +144,11 @@ the configured errno; the probe also checks the argument-conditioned rules
 domains vs. `PER_LINUX`/`PER_LINUX32`). It also builds one `default + extra`
 filter with `ptrace ALLOW`, `personality ALLOW a0 == 1`, and `getppid EPERM`,
 then checks that the user rules replace the matching defaults while an
-unrelated `personality` condition remains blocked. A canary aborts before any
-blocked syscall if the filter is not active, and the script fails if a rule has
-no corresponding test. It requires `bwrap`, the `libseccomp` headers, `cc`, and
-`make`.
+unrelated `personality` condition remains blocked. It also checks that strict
+mode rejects `ALLOW` in the base blocklist and warns when an extra `ALLOW`
+removes a default deny. A canary aborts before any blocked syscall if the
+filter is not active, and the script fails if a rule has no corresponding test.
+It requires `bwrap`, the `libseccomp` headers, `cc`, and `make`.
 
 ### Process execution tests (`bwrap_exec`)
 

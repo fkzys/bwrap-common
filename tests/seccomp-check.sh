@@ -775,6 +775,26 @@ fi
 # shellcheck source=../bwrap-common.sh disable=SC1091
 . "$_root/bwrap-common.sh"
 
+printf 'getppid ALLOW\n' >"$_tmp/base-allow.conf"
+if "$BWRAP_SECCOMP_GEN" --blocklist "$_tmp/base-allow.conf" --strict \
+        -o "$_tmp/base-allow.bpf" 2>/dev/null; then
+    echo "seccomp-check: strict mode accepted ALLOW in the base blocklist" >&2
+    exit 1
+fi
+
+printf 'ptrace EPERM\n' >"$_tmp/extra-base.conf"
+printf 'ptrace ALLOW\n' >"$_tmp/extra.rules"
+if ! "$BWRAP_SECCOMP_GEN" --blocklist "$_tmp/extra-base.conf" \
+        --extra "$_tmp/extra.rules" --strict -o "$_tmp/extra-allow.bpf" \
+        2>"$_tmp/extra-allow.err"; then
+    echo "seccomp-check: extra ALLOW rule was rejected" >&2
+    exit 1
+fi
+if ! grep -q "overrides a default deny with ALLOW" "$_tmp/extra-allow.err"; then
+    echo "seccomp-check: extra ALLOW override did not warn" >&2
+    exit 1
+fi
+
 if ! bwrap --unshare-all --ro-bind / / -- /usr/bin/true \
         >"$_tmp/preflight" 2>&1; then
     cat "$_tmp/preflight" >&2

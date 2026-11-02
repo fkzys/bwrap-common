@@ -319,13 +319,15 @@ bwrap_sandbox() {
 
 # ── seccomp filters ─────────────────────────────────────────
 _BWRAP_SECCOMP_FDS=()
+_BWRAP_SECCOMP_TMP_FILES=()
+declare -A _BWRAP_SECCOMP_WARNED_CACHES=()
 
 # bwrap_seccomp ARRAYNAME MODE [EXTRA_RULE...]
 #   none     no seccomp filter
 #   default  compile seccomp/default.conf at runtime and cache the result
 #   default EXTRA_RULE...
 #            compile one combined default + extra blocklist filter; each
-#            EXTRA_RULE is a blocklist line ("syscall EPERM|ENOSYS [condition]")
+#            EXTRA_RULE is a blocklist line ("syscall EPERM|ENOSYS|ALLOW [condition]")
 #            merged into the default filter (user rules win on duplicates)
 #   <spec>   syscall allowlist (space/comma separated), compiled on first use
 #            and cached like the other filters
@@ -406,6 +408,27 @@ _bwrap_seccomp_close_fds() {
         exec {_fd}<&- 2>/dev/null || true
     done
     _BWRAP_SECCOMP_FDS=()
+}
+
+_bwrap_seccomp_tmp_add() {
+    _BWRAP_SECCOMP_TMP_FILES+=("$1")
+    _bwrap_install_cleanup
+}
+
+_bwrap_seccomp_tmp_remove() {
+    local _tmp="$1" _keep=() _file
+    for _file in "${_BWRAP_SECCOMP_TMP_FILES[@]}"; do
+        [[ "$_file" == "$_tmp" ]] || _keep+=("$_file")
+    done
+    _BWRAP_SECCOMP_TMP_FILES=("${_keep[@]}")
+}
+
+_bwrap_seccomp_tmp_cleanup() {
+    local _file
+    for _file in "${_BWRAP_SECCOMP_TMP_FILES[@]}"; do
+        rm -f -- "$_file"
+    done
+    _BWRAP_SECCOMP_TMP_FILES=()
 }
 
 # Internal: run cleanup, then the caller's original EXIT trap.
@@ -504,10 +527,16 @@ _bwrap_seccomp_use() {
 
     local _fd
     if ! _bwrap_seccomp_open_fd "$_file" _fd; then
-        [[ "$_temp" == 1 ]] && rm -f "$_file"
+        if [[ "$_temp" == 1 ]]; then
+            _bwrap_seccomp_tmp_remove "$_file"
+            rm -f -- "$_file"
+        fi
         return 1
     fi
-    [[ "$_temp" == 1 ]] && rm -f "$_file"
+    if [[ "$_temp" == 1 ]]; then
+        _bwrap_seccomp_tmp_remove "$_file"
+        rm -f -- "$_file"
+    fi
     _arr+=(--seccomp "$_fd")
     return 0
 }
@@ -526,16 +555,65 @@ _bwrap_seccomp_cache_ready() {
     return 0
 }
 
-# Internal: warn that the persistent cache cannot be used.
 _bwrap_seccomp_warn_cache() {
-    echo "bwrap_seccomp: seccomp cache unavailable ($1); using runtime tmpfs fallback" >&2
+    local _cache="${1:-}"
+    if [[ -n "${_BWRAP_SECCOMP_WARNED_CACHES[$_cache]:-}" ]]; then
+        return 0
+    fi
+    _BWRAP_SECCOMP_WARNED_CACHES["$_cache"]=1
+    echo "bwrap_seccomp: seccomp cache unavailable ($_cache); using runtime tmpfs fallback" >&2
+}
+
+_bwrap_seccomp_conf_path() {
+    local _conf
+    _conf=$(_bwrap_seccomp_conf)
+    [[ -f "$_conf" && -r "$_conf" ]] || {
+        _bwrap_seccomp_fail "default seccomp config not found or unreadable: $_conf"
+        return 1
+    }
+    printf '%s' "$_conf"
+}
+
+_bwrap_seccomp_gen_version() {
+    local _gen="${BWRAP_SECCOMP_GEN:-/usr/lib/bwrap-common/bwrap-seccomp-gen}"
+    local _version
+
+    [[ -x "$_gen" ]] || {
+        _bwrap_seccomp_fail "seccomp generator not found: $_gen"
+        return 1
+    }
+    _version=$("$_gen" --version 2>/dev/null) || {
+        _bwrap_seccomp_fail "cannot query seccomp generator version: $_gen"
+        return 1
+    }
+    [[ -n "$_version" ]] || {
+        _bwrap_seccomp_fail "empty seccomp generator version: $_gen"
+        return 1
+    }
+    printf '%s' "$_version"
+}
+
+_bwrap_seccomp_cache_valid() {
+    local _file="$1" _sum="${1}.sha256" _want _got
+    [[ -f "$_file" && -f "$_sum" ]] || return 1
+    _want=$(cut -d' ' -f1 "$_sum" 2>/dev/null)
+    [[ -n "$_want" ]] || return 1
+    _got=$(sha256sum "$_file" 2>/dev/null | cut -d' ' -f1)
+    [[ -n "$_got" && "$_got" == "$_want" ]]
+}
+
+_bwrap_seccomp_write_sum() {
+    local _file="$1" _sum="$2" _hash
+    _hash=$(sha256sum "$_file" 2>/dev/null | cut -d' ' -f1)
+    [[ -n "$_hash" ]] || return 1
+    printf '%s\n' "$_hash" > "$_sum"
 }
 
 # Internal: invoke the generator for KIND into OUT.
 _bwrap_seccomp_compile() {
     local _kind="$1" _payload="$2" _out="$3"
     local _gen="${BWRAP_SECCOMP_GEN:-/usr/lib/bwrap-common/bwrap-seccomp-gen}"
-    local _arch _conf _rules
+    local _arch _conf
 
     if [[ ! -x "$_gen" ]]; then
         _bwrap_seccomp_fail "seccomp generator not found: $_gen"
@@ -548,30 +626,13 @@ _bwrap_seccomp_compile() {
             "$_gen" --allowlist "$_payload" --arch "$_arch" -o "$_out"
             ;;
         default)
-            _conf=$(_bwrap_seccomp_conf)
-            [[ -f "$_conf" && -r "$_conf" ]] || {
-                _bwrap_seccomp_fail "default seccomp config not found or unreadable: $_conf"
-                return 1
-            }
+            _conf=$(_bwrap_seccomp_conf_path) || return 1
             "$_gen" --blocklist "$_conf" --arch "$_arch" --strict -o "$_out"
             ;;
         default-extra)
-            _conf=$(_bwrap_seccomp_conf)
-            [[ -f "$_conf" && -r "$_conf" ]] || {
-                _bwrap_seccomp_fail "default seccomp config not found or unreadable: $_conf"
-                return 1
-            }
-            _rules="${_out}.rules.$$"
-            if ! printf '%s\n' "$_payload" > "$_rules"; then
-                rm -f "$_rules"
-                _bwrap_seccomp_fail "cannot write extra blocklist spec"
-                return 1
-            fi
-            if ! "$_gen" --blocklist "$_conf" --extra "$_rules" --arch "$_arch" --strict -o "$_out"; then
-                rm -f "$_rules"
-                return 1
-            fi
-            rm -f "$_rules"
+            _conf=$(_bwrap_seccomp_conf_path) || return 1
+            "$_gen" --blocklist "$_conf" --extra - --arch "$_arch" --strict \
+                -o "$_out" <<< "$_payload"
             ;;
         *)
             _bwrap_seccomp_fail "unknown seccomp filter kind: $_kind"
@@ -596,8 +657,10 @@ _bwrap_seccomp_runtime_prepare() {
         _bwrap_seccomp_fail "cannot create runtime seccomp filter in $_runtime"
         return 1
     fi
+    _bwrap_seccomp_tmp_add "$_tmp"
     if ! _bwrap_seccomp_compile "$_kind" "$_payload" "$_tmp"; then
-        rm -f "$_tmp"
+        _bwrap_seccomp_tmp_remove "$_tmp"
+        rm -f -- "$_tmp"
         _bwrap_seccomp_fail "failed to compile seccomp filter"
         return 1
     fi
@@ -617,27 +680,46 @@ _bwrap_seccomp_prepare() {
     _cache_file="${_cache}/${_hash}.bpf"
 
     if [[ -f "$_cache_file" ]]; then
-        _prep_path="$_cache_file"
-        _prep_temp=0
-        return 0
+        if _bwrap_seccomp_cache_valid "$_cache_file"; then
+            _prep_path="$_cache_file"
+            _prep_temp=0
+            return 0
+        fi
+        echo "bwrap_seccomp: cached filter failed validation, recompiling: $_cache_file" >&2
+        rm -f -- "$_cache_file" "${_cache_file}.sha256"
     fi
 
     if _bwrap_seccomp_cache_ready "$_cache"; then
-        _tmp="${_cache_file}.tmp.$$"
-        if _bwrap_seccomp_compile "$_kind" "$_payload" "$_tmp"; then
-            chmod 600 "$_tmp" 2>/dev/null || true
-            if mv -f "$_tmp" "$_cache_file"; then
-                chmod 600 "$_cache_file" 2>/dev/null || true
-                _prep_path="$_cache_file"
-                _prep_temp=0
-                return 0
-            fi
-            rm -f "$_tmp"
+        if ! _tmp=$(mktemp "${_cache_file}.tmp.XXXXXX" 2>/dev/null); then
             _bwrap_seccomp_warn_cache "$_cache"
             _bwrap_seccomp_runtime_prepare "$_kind" "$_payload" _prep_path _prep_temp
             return $?
         fi
-        rm -f "$_tmp"
+        _bwrap_seccomp_tmp_add "$_tmp"
+        local _sum="${_tmp}.sha256"
+        _bwrap_seccomp_tmp_add "$_sum"
+        if _bwrap_seccomp_compile "$_kind" "$_payload" "$_tmp"; then
+            chmod 600 "$_tmp" 2>/dev/null || true
+            if _bwrap_seccomp_write_sum "$_tmp" "$_sum" &&
+                mv -f "$_tmp" "$_cache_file" &&
+                mv -f "$_sum" "${_cache_file}.sha256"; then
+                chmod 600 "$_cache_file" "${_cache_file}.sha256" 2>/dev/null || true
+                _bwrap_seccomp_tmp_remove "$_tmp"
+                _bwrap_seccomp_tmp_remove "$_sum"
+                _prep_path="$_cache_file"
+                _prep_temp=0
+                return 0
+            fi
+            rm -f -- "$_tmp" "$_sum" "$_cache_file" "${_cache_file}.sha256"
+            _bwrap_seccomp_tmp_remove "$_tmp"
+            _bwrap_seccomp_tmp_remove "$_sum"
+            _bwrap_seccomp_warn_cache "$_cache"
+            _bwrap_seccomp_runtime_prepare "$_kind" "$_payload" _prep_path _prep_temp
+            return $?
+        fi
+        rm -f -- "$_tmp" "$_sum"
+        _bwrap_seccomp_tmp_remove "$_tmp"
+        _bwrap_seccomp_tmp_remove "$_sum"
         echo "bwrap_seccomp: cached filter compilation failed; retrying in runtime tmpfs" >&2
     else
         _bwrap_seccomp_warn_cache "$_cache"
@@ -655,6 +737,7 @@ _bwrap_seccomp_default() {
 
     if (( $# > 0 )); then
         for _rule in "$@"; do
+            [[ "$_rule" =~ ^[[:space:]]*(#|$) ]] && continue
             [[ -n "$_spec" ]] && _spec+=$'\n'
             _spec+="$_rule"
         done
@@ -672,23 +755,20 @@ _bwrap_seccomp_default() {
         return 1
     fi
 
-    local _conf _conf_sha _arch _hash
-    _conf=$(_bwrap_seccomp_conf)
-    if [[ ! -f "$_conf" || ! -r "$_conf" ]]; then
-        _bwrap_seccomp_fail "default seccomp config not found or unreadable: $_conf"
-        return 1
-    fi
+    local _conf _conf_sha _gen_ver _arch _hash
+    _conf=$(_bwrap_seccomp_conf_path) || return 1
     _conf_sha=$(sha256sum "$_conf" 2>/dev/null | cut -d' ' -f1)
     if [[ -z "$_conf_sha" ]]; then
         _bwrap_seccomp_fail "failed to hash default seccomp config: $_conf"
         return 1
     fi
+    _gen_ver=$(_bwrap_seccomp_gen_version) || return 1
 
     _arch=$(_bwrap_seccomp_arch)
     if [[ "$_kind" == "default" ]]; then
-        _hash=$(printf 'bwrap-common-seccomp-default-v3\n%s\n%s\n' "$_arch" "$_conf_sha" | sha256sum | cut -d' ' -f1)
+        _hash=$(printf 'bwrap-common-seccomp-default-v4\n%s\nstrict\n%s\n%s\n' "$_gen_ver" "$_arch" "$_conf_sha" | sha256sum | cut -d' ' -f1)
     else
-        _hash=$(printf 'bwrap-common-seccomp-default-extra-v3\n%s\n%s\n%s\n' "$_arch" "$_conf_sha" "$_spec" | sha256sum | cut -d' ' -f1)
+        _hash=$(printf 'bwrap-common-seccomp-default-extra-v4\n%s\nstrict\n%s\n%s\n%s\n' "$_gen_ver" "$_arch" "$_conf_sha" "$_spec" | sha256sum | cut -d' ' -f1)
     fi
     if [[ -z "$_hash" ]]; then
         _bwrap_seccomp_fail "failed to compute cache key"
@@ -715,9 +795,10 @@ _bwrap_seccomp_allowlist() {
 
     _bwrap_seccomp_reject_existing "$_arrname" || return 1
 
-    local _arch _hash
+    local _gen_ver _arch _hash
+    _gen_ver=$(_bwrap_seccomp_gen_version) || return 1
     _arch=$(_bwrap_seccomp_arch)
-    _hash=$(printf 'bwrap-common-seccomp-v3\n%s\n%s\n' "$_arch" "$_spec" | sha256sum | cut -d' ' -f1)
+    _hash=$(printf 'bwrap-common-seccomp-v4\n%s\nallowlist\n%s\n%s\n' "$_gen_ver" "$_arch" "$_spec" | sha256sum | cut -d' ' -f1)
     if [[ -z "$_hash" ]]; then
         _bwrap_seccomp_fail "failed to compute cache key"
         return 1
@@ -831,6 +912,7 @@ _bwrap_dbus_cleanup() {
 _bwrap_cleanup() {
     _bwrap_dbus_cleanup
     _bwrap_seccomp_close_fds
+    _bwrap_seccomp_tmp_cleanup
 }
 
 # xdg-dbus-proxy rules: XDG portals
