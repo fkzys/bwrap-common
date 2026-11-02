@@ -271,4 +271,37 @@ T=()
 bwrap_ssh_agent T
 [[ ${#T[@]} -eq 0 ]] && ok "empty without SSH_AUTH_SOCK" || fail "should be empty without socket"
 
+# ── unavailable-resource warnings ───────────────────────────
+
+section "unavailable-resource warnings"
+
+WARN_ERR="${TMPDIR_TEST}/warn.err"
+WARN_HOME="${TMPDIR_TEST}/warn-home"
+WARN_RT="${TMPDIR_TEST}/warn-rt"
+mkdir -p "$WARN_HOME" "$WARN_RT"
+
+RB=()
+bwrap_ro_bind_dir RB "${TMPDIR_TEST}/missing-ro-dir" 2>"$WARN_ERR"
+grep -q "bwrap_ro_bind_dir: skipping missing directory" "$WARN_ERR" \
+    && ok "ro_bind_dir warns on a missing directory" || fail "ro_bind_dir warning absent"
+
+( SSH=(); unset SSH_AUTH_SOCK; bwrap_ssh_agent SSH ) 2>"$WARN_ERR"
+grep -q "bwrap_ssh_agent: .*SSH_AUTH_SOCK" "$WARN_ERR" \
+    && ok "ssh_agent warns without a socket" || fail "ssh_agent warning absent"
+
+TH=()
+HOME="$WARN_HOME" bwrap_themes TH 2>"$WARN_ERR"
+grep -q "bwrap_themes: no theme/config paths found" "$WARN_ERR" \
+    && ok "themes warns when nothing is found" || fail "themes warning absent"
+
+AU=()
+XDG_RUNTIME_DIR="$WARN_RT" bwrap_audio AU 2>"$WARN_ERR"
+grep -q "bwrap_audio: no PipeWire or PulseAudio" "$WARN_ERR" \
+    && ok "audio warns without sockets" || fail "audio warning absent"
+
+RFB=(); RFA=()
+bwrap_resolve_files RFB RFA --ro-bind "/nonexistent/app/bin" 2>"$WARN_ERR"
+grep -q "bwrap_resolve_files: not found, left as-is" "$WARN_ERR" \
+    && ok "resolve_files warns on a missing path argument" || fail "resolve_files warning absent"
+
 

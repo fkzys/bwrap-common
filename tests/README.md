@@ -70,6 +70,10 @@ Each function is called with a fresh empty array, then the array contents are in
 - **`require_dir`**: verifies success for `/tmp` and failure (in a subshell) for a nonexistent path
 - **`bwrap_fcitx`**: verifies `--setenv QT_IM_MODULE` and `--setenv XMODIFIERS` for input method support
 - **`bwrap_ssh_agent`**: verifies empty output when `SSH_AUTH_SOCK` is unset
+- **unavailable-resource warnings**: `bwrap_ro_bind_dir`, `bwrap_ssh_agent`,
+  `bwrap_themes`, `bwrap_audio`, and `bwrap_resolve_files` print a warning to
+  stderr (and append nothing) when the resource they were asked for is missing,
+  so a skipped optional resource is no longer silent
 
 ### Composite function tests
 
@@ -139,6 +143,8 @@ with an empty `PATH` so `xdg-dbus-proxy` is unavailable:
   reported as a missing proxy. The session case points `XDG_RUNTIME_DIR` at a
   fresh empty directory so no session socket exists; the system-bus case runs
   only when `/run/dbus/system_bus_socket` is absent
+- `bwrap_dbus_session` (unfiltered) warns on stderr and appends nothing when no
+  session bus exists
 - against the real `xdg-dbus-proxy` — a hard dependency of the suite, installed
   by CI — the full `bwrap_dbus_system_filtered` path is exercised: the proxy
   starts, the socket appears, `/proc/<pid>/cmdline` shows `--filter` and the

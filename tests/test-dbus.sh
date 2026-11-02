@@ -32,6 +32,12 @@ XDG_RUNTIME_DIR="$DNB_RUNTIME" PATH="$EMPTY_PATH" DBUS_SESSION_BUS_ADDRESS="" bw
 DNB_RC=$?
 [[ $DNB_RC -eq 0 && ${#DNB[@]} -eq 0 ]] && ok "no session bus is skipped before the proxy check" || fail "no session bus returned $DNB_RC"
 
+DSSW="${TMPDIR_TEST}/dbus-session-nobus.err"
+DSS=()
+XDG_RUNTIME_DIR="$DNB_RUNTIME" DBUS_SESSION_BUS_ADDRESS="" bwrap_dbus_session DSS 2>"$DSSW"
+[[ ${#DSS[@]} -eq 0 ]] && grep -q "bwrap_dbus_session: no session bus found" "$DSSW" \
+    && ok "unfiltered dbus_session warns when no bus exists" || fail "dbus_session no-bus warning absent"
+
 DSESS_PROXY_ARGS="${TMPDIR_TEST}/session-filtered-proxy-args"
 DSESS_ARRAY="${TMPDIR_TEST}/session-filtered-array"
 (
