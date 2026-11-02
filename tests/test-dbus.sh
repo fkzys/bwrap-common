@@ -134,6 +134,12 @@ if [[ ! -S /run/dbus/system_bus_socket ]]; then
     PATH="$EMPTY_PATH" DBUS_SYSTEM_BUS_ADDRESS="" bwrap_dbus_system_filtered DNS 2>/dev/null
     DNS_RC=$?
     [[ $DNS_RC -eq 0 && ${#DNS[@]} -eq 0 ]] && ok "no system bus is skipped before the proxy check" || fail "no system bus returned $DNS_RC"
+
+    DSYW="${TMPDIR_TEST}/dbus-system-nobus.err"
+    DSSY=()
+    DBUS_SYSTEM_BUS_ADDRESS="" bwrap_dbus_system DSSY 2>"$DSYW"
+    [[ ${#DSSY[@]} -eq 0 ]] && grep -q "bwrap_dbus_system: no system bus found" "$DSYW" \
+        && ok "unfiltered dbus_system warns when no bus exists" || fail "dbus_system no-bus warning absent"
 fi
 
 DSYS_PROXY_ARGS="${TMPDIR_TEST}/system-filtered-proxy-args"

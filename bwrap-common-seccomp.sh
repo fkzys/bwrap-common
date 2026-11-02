@@ -218,9 +218,9 @@ _bwrap_seccomp_warn_cache() {
     fi
     _BWRAP_SECCOMP_WARNED_CACHES["$_cache"]=1
     if [[ -n "$_reason" ]]; then
-        echo "bwrap_seccomp: seccomp cache unavailable ($_cache): $_reason; using runtime tmpfs fallback" >&2
+        _bwrap_warn "bwrap_seccomp: seccomp cache unavailable ($_cache): $_reason; using runtime tmpfs fallback"
     else
-        echo "bwrap_seccomp: seccomp cache unavailable ($_cache); using runtime tmpfs fallback" >&2
+        _bwrap_warn "bwrap_seccomp: seccomp cache unavailable ($_cache); using runtime tmpfs fallback"
     fi
 }
 
@@ -351,7 +351,7 @@ _bwrap_seccomp_prepare() {
             _prep_temp=0
             return 0
         fi
-        echo "bwrap_seccomp: cached filter failed validation, recompiling: $_cache_file" >&2
+        _bwrap_warn "bwrap_seccomp: cached filter failed validation, recompiling: $_cache_file"
     fi
 
     if (( _cache_ready )); then
@@ -385,7 +385,7 @@ _bwrap_seccomp_prepare() {
         rm -f -- "$_tmp" "$_sum"
         _bwrap_seccomp_tmp_remove "$_tmp"
         _bwrap_seccomp_tmp_remove "$_sum"
-        echo "bwrap_seccomp: cached filter compilation failed; retrying in runtime tmpfs" >&2
+        _bwrap_warn "bwrap_seccomp: cached filter compilation failed; retrying in runtime tmpfs"
     fi
 
     _bwrap_seccomp_runtime_prepare "$_kind" "$_payload" _prep_path _prep_temp

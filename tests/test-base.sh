@@ -282,26 +282,76 @@ mkdir -p "$WARN_HOME" "$WARN_RT"
 
 RB=()
 bwrap_ro_bind_dir RB "${TMPDIR_TEST}/missing-ro-dir" 2>"$WARN_ERR"
-grep -q "bwrap_ro_bind_dir: skipping missing directory" "$WARN_ERR" \
+grep -qxF "bwrap_ro_bind_dir: skipping missing directory: ${TMPDIR_TEST}/missing-ro-dir" "$WARN_ERR" \
     && ok "ro_bind_dir warns on a missing directory" || fail "ro_bind_dir warning absent"
 
 ( SSH=(); unset SSH_AUTH_SOCK; bwrap_ssh_agent SSH ) 2>"$WARN_ERR"
-grep -q "bwrap_ssh_agent: .*SSH_AUTH_SOCK" "$WARN_ERR" \
+grep -qxF "bwrap_ssh_agent: SSH_AUTH_SOCK is unset or not a socket; skipping" "$WARN_ERR" \
     && ok "ssh_agent warns without a socket" || fail "ssh_agent warning absent"
 
 TH=()
 HOME="$WARN_HOME" bwrap_themes TH 2>"$WARN_ERR"
-grep -q "bwrap_themes: no theme/config paths found" "$WARN_ERR" \
+grep -qxF "bwrap_themes: no theme/config paths found" "$WARN_ERR" \
     && ok "themes warns when nothing is found" || fail "themes warning absent"
 
 AU=()
 XDG_RUNTIME_DIR="$WARN_RT" bwrap_audio AU 2>"$WARN_ERR"
-grep -q "bwrap_audio: no PipeWire or PulseAudio" "$WARN_ERR" \
+grep -qxF "bwrap_audio: no PipeWire or PulseAudio socket found" "$WARN_ERR" \
     && ok "audio warns without sockets" || fail "audio warning absent"
 
+WY=()
+XDG_RUNTIME_DIR="$WARN_RT" WAYLAND_DISPLAY="wayland-1" bwrap_wayland WY 2>"$WARN_ERR"
+grep -q "bwrap_wayland: no Wayland socket" "$WARN_ERR" \
+    && ok "wayland warns without a socket" || fail "wayland warning absent"
+
+XW=()
+( unset DISPLAY; bwrap_x11 XW ) 2>"$WARN_ERR"
+grep -qxF "bwrap_x11: DISPLAY is not set; skipping" "$WARN_ERR" \
+    && ok "x11 warns when DISPLAY is unset" || fail "x11 warning absent"
+
+if [[ ! -d /dev/dri ]]; then
+    GW=()
+    bwrap_gpu GW 2>"$WARN_ERR"
+    grep -q "bwrap_gpu: no GPU device nodes found" "$WARN_ERR" \
+        && ok "gpu warns when no device nodes exist" || fail "gpu warning absent"
+fi
+
+if [[ -L /etc/resolv.conf ]]; then
+    RESOLV_REAL="$(realpath /etc/resolv.conf 2>/dev/null)"
+    RESOLV_DIR="$(dirname "$RESOLV_REAL")"
+    RV=()
+    bwrap_resolv RV 2>"$WARN_ERR"
+    if [[ -n "$RESOLV_REAL" && "$RESOLV_DIR" != "/" && -d "$RESOLV_DIR" ]]; then
+        [[ ! -s "$WARN_ERR" ]] && ok "resolv is silent when it binds a real resolver directory" || fail "resolv warned despite a usable directory"
+    else
+        [[ -s "$WARN_ERR" ]] && ok "resolv warns when the resolver directory is unusable" || fail "resolv did not warn about an unusable directory"
+    fi
+else
+    RV=()
+    bwrap_resolv RV 2>"$WARN_ERR"
+    [[ ! -s "$WARN_ERR" ]] && ok "resolv is silent when /etc/resolv.conf is not a symlink" || fail "resolv warned on a plain resolv.conf"
+fi
+
 RFB=(); RFA=()
-bwrap_resolve_files RFB RFA --ro-bind "/nonexistent/app/bin" 2>"$WARN_ERR"
-grep -q "bwrap_resolve_files: not found, left as-is" "$WARN_ERR" \
-    && ok "resolve_files warns on a missing path argument" || fail "resolve_files warning absent"
+bwrap_resolve_files RFB RFA --ro-bind "${TMPDIR_TEST}/missing-app" 2>"$WARN_ERR"
+grep -qxF "bwrap_resolve_files: not found, left as-is: ${TMPDIR_TEST}/missing-app" "$WARN_ERR" \
+    && ok "resolve_files warns on a missing path (explicit mode)" || fail "resolve_files explicit-mode warning absent"
+
+RFB2=(); RFA2=()
+bwrap_resolve_files RFB2 RFA2 "${TMPDIR_TEST}/missing-app" 2>"$WARN_ERR"
+grep -qxF "bwrap_resolve_files: not found, left as-is: ${TMPDIR_TEST}/missing-app" "$WARN_ERR" \
+    && ok "resolve_files warns on a missing path (default mode)" || fail "resolve_files default-mode warning absent"
+
+RFB3=(); RFA3=()
+bwrap_resolve_files RFB3 RFA3 "user/repo" "https://example/x" 2>"$WARN_ERR"
+if [[ ! -s "$WARN_ERR" && ${#RFA3[@]} -eq 2 ]]; then
+    ok "resolve_files stays silent for non-path slash arguments"
+else
+    fail "resolve_files warned on non-path arguments"
+fi
+
+QW=()
+BWRAP_QUIET=1 bwrap_ro_bind_dir QW "${TMPDIR_TEST}/missing-ro-dir" 2>"$WARN_ERR"
+[[ ! -s "$WARN_ERR" ]] && ok "BWRAP_QUIET silences warnings" || fail "BWRAP_QUIET did not silence the warning"
 
 

@@ -71,9 +71,13 @@ Each function is called with a fresh empty array, then the array contents are in
 - **`bwrap_fcitx`**: verifies `--setenv QT_IM_MODULE` and `--setenv XMODIFIERS` for input method support
 - **`bwrap_ssh_agent`**: verifies empty output when `SSH_AUTH_SOCK` is unset
 - **unavailable-resource warnings**: `bwrap_ro_bind_dir`, `bwrap_ssh_agent`,
-  `bwrap_themes`, `bwrap_audio`, and `bwrap_resolve_files` print a warning to
-  stderr (and append nothing) when the resource they were asked for is missing,
-  so a skipped optional resource is no longer silent
+  `bwrap_themes`, `bwrap_audio`, `bwrap_wayland`, `bwrap_x11`, `bwrap_gpu`,
+  `bwrap_resolv`, and `bwrap_resolve_files` print a warning to stderr (and
+  append nothing) when the resource they were asked for is missing, so a
+  skipped optional resource is no longer silent. `bwrap_resolve_files` is
+  checked with both an explicit and an omitted (`default`) mode, and stays
+  silent for non-path slash arguments (`user/repo`, URLs). `BWRAP_QUIET=1`
+  silences the warning. The `gpu` case runs only when `/dev/dri` is absent
 
 ### Composite function tests
 

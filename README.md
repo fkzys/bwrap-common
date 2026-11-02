@@ -107,6 +107,7 @@ bwrap_exec "${A[@]}" -- /usr/bin/app "$@"
 | `BWRAP_SECCOMP_GEN` | `/usr/lib/bwrap-common/bwrap-seccomp-gen` (rule compiler) |
 | `BWRAP_SECCOMP_CACHE_DIR` | `${XDG_CACHE_HOME:-$HOME/.cache}/bwrap-common/seccomp` |
 | `BWRAP_SECCOMP_ARCH` | overrides `uname -m` (cross-arch tests) |
+| `BWRAP_QUIET` | unset; any non-empty value silences library warnings on stderr (errors are never silenced) |
 
 The default filter is compiled from `seccomp/default.conf` at runtime and cached.
 Cache keys include the generator `--version` (including the loaded libseccomp version), filter mode, and architecture:

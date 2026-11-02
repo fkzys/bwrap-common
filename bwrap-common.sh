@@ -15,6 +15,12 @@ VERSION="1.0.0"
 # Set before loading modules so any top-level module code can rely on it.
 XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 
+# diagnostics; suppressed by BWRAP_QUIET.
+_bwrap_warn() {
+    [[ -n "${BWRAP_QUIET:-}" ]] && return 0
+    printf '%s\n' "$*" >&2
+}
+
 # Resolve this file after following symlinks so a symlinked entry point still
 # finds its sibling modules.
 _bwrap_common_dir=$(cd -- "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")" && pwd) || {
@@ -107,7 +113,7 @@ bwrap_gpu() {
         [[ -e "$dev" ]] && { _arr+=(--dev-bind "$dev" "$dev"); _found=1; }
     done
     [[ -d /dev/nvidia-caps ]] && { _arr+=(--dev-bind /dev/nvidia-caps /dev/nvidia-caps); _found=1; }
-    (( _found )) || echo "bwrap_gpu: no GPU device nodes found (/dev/dri, /dev/nvidia*)" >&2
+    (( _found )) || _bwrap_warn "bwrap_gpu: no GPU device nodes found (/dev/dri, /dev/nvidia*)"
     :
 }
 
@@ -124,20 +130,17 @@ bwrap_lib64() {
 # ── resolv.conf (often symlink into /run) ─────────────────────
 bwrap_resolv() {
     local -n _arr=$1
-    if [[ ! -L /etc/resolv.conf ]]; then
-        echo "bwrap_resolv: /etc/resolv.conf is not a symlink; skipping" >&2
-        return 0
-    fi
+    [[ -L /etc/resolv.conf ]] || return 0
     local _real _rd
     _real="$(realpath /etc/resolv.conf 2>/dev/null)" || {
-        echo "bwrap_resolv: cannot resolve /etc/resolv.conf; skipping" >&2
+        _bwrap_warn "bwrap_resolv: cannot resolve /etc/resolv.conf; skipping"
         return 0
     }
     _rd="$(dirname "$_real")"
     if [[ -n "$_rd" && "$_rd" != "/" && -d "$_rd" ]]; then
         _arr+=(--ro-bind "$_rd" "$_rd")
     else
-        echo "bwrap_resolv: no usable resolver directory ($_rd); skipping" >&2
+        _bwrap_warn "bwrap_resolv: no usable resolver directory ($_rd); skipping"
     fi
 }
 
@@ -152,7 +155,7 @@ bwrap_wayland() {
         )
         [[ -f "${_wl}.lock" ]] && _arr+=(--ro-bind "${_wl}.lock" "${_wl}.lock")
     else
-        echo "bwrap_wayland: no Wayland socket at $_wl; skipping" >&2
+        _bwrap_warn "bwrap_wayland: no Wayland socket at $_wl; skipping"
     fi
 }
 
@@ -160,13 +163,13 @@ bwrap_wayland() {
 bwrap_x11() {
     local -n _arr=$1
     if [[ -z "${DISPLAY:-}" ]]; then
-        echo "bwrap_x11: DISPLAY is not set; skipping" >&2
+        _bwrap_warn "bwrap_x11: DISPLAY is not set; skipping"
         return 0
     fi
     if [[ -d /tmp/.X11-unix ]]; then
         _arr+=(--ro-bind /tmp/.X11-unix /tmp/.X11-unix)
     else
-        echo "bwrap_x11: /tmp/.X11-unix is missing; skipping" >&2
+        _bwrap_warn "bwrap_x11: /tmp/.X11-unix not found; X11 socket not bound"
     fi
     _arr+=(--setenv DISPLAY "${DISPLAY}")
     if [[ -n "${XAUTHORITY:-}" && -f "${XAUTHORITY}" ]]; then
@@ -189,7 +192,7 @@ bwrap_audio() {
         _arr+=(--bind "${XDG_RUNTIME_DIR}/pulse" "${XDG_RUNTIME_DIR}/pulse")
         _found=1
     }
-    (( _found )) || echo "bwrap_audio: no PipeWire or PulseAudio socket found" >&2
+    (( _found )) || _bwrap_warn "bwrap_audio: no PipeWire or PulseAudio socket found"
     :
 }
 
@@ -205,7 +208,7 @@ bwrap_dbus_session() {
                 --setenv DBUS_SESSION_BUS_ADDRESS "$_bus"
             )
         else
-            echo "bwrap_dbus_session: session bus socket not found: $_bus_path" >&2
+            _bwrap_warn "bwrap_dbus_session: session bus socket not found: $_bus_path"
         fi
     elif [[ -S "${XDG_RUNTIME_DIR}/bus" ]]; then
         _arr+=(
@@ -213,7 +216,7 @@ bwrap_dbus_session() {
             --setenv DBUS_SESSION_BUS_ADDRESS "unix:path=${XDG_RUNTIME_DIR}/bus"
         )
     else
-        echo "bwrap_dbus_session: no session bus found; skipping" >&2
+        _bwrap_warn "bwrap_dbus_session: no session bus found; skipping"
     fi
 }
 
@@ -227,7 +230,7 @@ bwrap_dbus_system() {
             --bind /run/dbus/system_bus_socket /run/dbus/system_bus_socket
         )
     else
-        echo "bwrap_dbus_system: no system bus found; skipping" >&2
+        _bwrap_warn "bwrap_dbus_system: no system bus found; skipping"
     fi
 }
 
@@ -243,7 +246,7 @@ bwrap_dbus_filtered() {
         if [[ -S "${XDG_RUNTIME_DIR}/bus" ]]; then
             bus_addr="unix:path=${XDG_RUNTIME_DIR}/bus"
         else
-            echo "bwrap_dbus_filtered: no session bus found, skipping" >&2
+            _bwrap_warn "bwrap_dbus_filtered: no session bus found, skipping"
             return 0
         fi
     fi
@@ -274,7 +277,7 @@ bwrap_dbus_system_filtered() {
         if [[ -S /run/dbus/system_bus_socket ]]; then
             bus_addr="unix:path=/run/dbus/system_bus_socket"
         else
-            echo "bwrap_dbus_system_filtered: no system bus found, skipping" >&2
+            _bwrap_warn "bwrap_dbus_system_filtered: no system bus found, skipping"
             return 0
         fi
     fi
@@ -363,7 +366,7 @@ bwrap_themes() {
         "${HOME}/.icons"; do
         [[ -e "$p" ]] && { _arr+=(--ro-bind "$p" "$p"); _found=1; }
     done
-    (( _found )) || echo "bwrap_themes: no theme/config paths found" >&2
+    (( _found )) || _bwrap_warn "bwrap_themes: no theme/config paths found"
     :
 }
 
@@ -371,8 +374,14 @@ bwrap_themes() {
 bwrap_resolve_files() {
     local -n _binds=$1
     local -n _args=$2
-    local _mode="${3:---ro-bind}"
-    shift 3
+    shift 2
+    local _mode="--ro-bind"
+    case "${1:-}" in
+        --ro-bind|--bind|--dev-bind)
+            _mode=$1
+            shift
+            ;;
+    esac
     local arg
     for arg in "$@"; do
         if [[ "$arg" == -* ]]; then
@@ -390,7 +399,9 @@ bwrap_resolve_files() {
             esac
             _args+=("$_real")
         else
-            [[ "$arg" == */* ]] && echo "bwrap_resolve_files: not found, left as-is: $arg" >&2
+            case "$arg" in
+                /*|./*|../*) _bwrap_warn "bwrap_resolve_files: not found, left as-is: $arg" ;;
+            esac
             _args+=("$arg")
         fi
     done
@@ -449,7 +460,7 @@ bwrap_ro_bind_dir() {
         if [[ -d "$_d" ]]; then
             _arr+=(--ro-bind "$_d" "$_d")
         else
-            echo "bwrap_ro_bind_dir: skipping missing directory: $_d" >&2
+            _bwrap_warn "bwrap_ro_bind_dir: skipping missing directory: $_d"
         fi
     done
     :
@@ -552,7 +563,7 @@ bwrap_ssh_agent() {
         _arr+=(--bind "${SSH_AUTH_SOCK}" "${SSH_AUTH_SOCK}"
                --setenv SSH_AUTH_SOCK "${SSH_AUTH_SOCK}")
     else
-        echo "bwrap_ssh_agent: SSH_AUTH_SOCK is unset or not a socket; skipping" >&2
+        _bwrap_warn "bwrap_ssh_agent: SSH_AUTH_SOCK is unset or not a socket; skipping"
     fi
 }
 
