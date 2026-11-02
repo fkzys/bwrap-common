@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# bwrap-common: seccomp filter support.
+# bwrap-common: seccomp filter internals.
 # Loaded by bwrap-common.sh; do not source directly.
 
 # ── seccomp filters ─────────────────────────────────────────

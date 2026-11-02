@@ -186,7 +186,6 @@ The GitHub Actions workflow (`.github/workflows/ci.yml`) runs on push/PR when `b
 
 - **`shellcheck`** job: runs `shellcheck -s bash` twice — a strict pass over the library entry point and both modules (`-e SC2034,SC2178,SC2317`), and a relaxed pass over all `tests/*.sh` (`-e SC2034,SC2178,SC2317,SC1091,SC2015,SC2030,SC2031,SC2329` for the test scripts' idioms)
 - **`test`** job: installs `xdg-dbus-proxy` and runs `bash tests/test.sh`
-- **`test`** job: runs `bash tests/test.sh`
 - **`seccomp`** job: installs `bubblewrap`, `libseccomp-dev`, and `build-essential`, enables unprivileged user namespaces, and runs `tests/seccomp-check.sh`; it retries as root only when the script reports exit status `77` (sandbox environment unavailable), so real filter failures are not masked
 
 ## Test environment

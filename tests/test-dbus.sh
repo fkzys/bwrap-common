@@ -182,14 +182,16 @@ else
     has_arg RP_LINES "--talk=org.example.X" && ok "real proxy receives extra rules" || fail "real proxy missing extra rules"
     [[ -f "$RP_GONE" ]] && ok "cleanup removes the proxy socket" || fail "cleanup left the proxy socket"
 
+    RP_BAD_ERR="${TMPDIR_TEST}/real-bad-call.err"
     (
         DSRB=()
         DBUS_SYSTEM_BUS_ADDRESS="unix:path=/nonexistent" \
             bwrap_dbus_system_filtered DSRB --call=org.freedesktop.UPower
         exit $?
-    ) >/dev/null 2>&1
+    ) >/dev/null 2>"$RP_BAD_ERR"
     RP_BAD_RC=$?
     [[ $RP_BAD_RC -eq 1 ]] && ok "real proxy rejects --call=NAME without a rule" || fail "invalid --call unexpectedly accepted (rc=$RP_BAD_RC)"
+    grep -q "not a valid name" "$RP_BAD_ERR" && ok "rejection is the proxy's argument error" || fail "bare --call failed for another reason: $(tr '\n' ' ' < "$RP_BAD_ERR")"
 fi
 
 

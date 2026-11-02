@@ -131,9 +131,9 @@ blocklist rules can be merged into the default filter with
 
 | Path | Purpose |
 |---|---|
-| `/usr/lib/bwrap-common/bwrap-common.sh` | Library entry point; sources the modules below |
-| `/usr/lib/bwrap-common/bwrap-common-seccomp.sh` | seccomp filter module (internal, sourced by the entry point) |
-| `/usr/lib/bwrap-common/bwrap-common-dbus.sh` | filtered D-Bus module (internal, sourced by the entry point) |
+| `/usr/lib/bwrap-common/bwrap-common.sh` | Library entry point (public API); sources the internal modules below |
+| `/usr/lib/bwrap-common/bwrap-common-seccomp.sh` | seccomp internals (sourced by the entry point) |
+| `/usr/lib/bwrap-common/bwrap-common-dbus.sh` | filtered D-Bus internals (sourced by the entry point) |
 | `/usr/lib/bwrap-common/bwrap-seccomp-gen` | Runtime rule compiler |
 | `/usr/lib/bwrap-common/seccomp/default.conf` | Default blocklist source, compiled at runtime |
 | `seccomp/default.conf` | Default blocklist source in the repo |

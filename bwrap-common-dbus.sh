@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# bwrap-common: filtered D-Bus proxy helpers.
+# bwrap-common: filtered D-Bus proxy internals.
 # Loaded by bwrap-common.sh; do not source directly.
 
 # ══════════════════════════════════════════════════════════════
