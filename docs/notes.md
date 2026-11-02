@@ -72,6 +72,7 @@ secrets and loader/interpreter variables from the calling environment.
 | `bwrap_audio` | PipeWire + PulseAudio sockets |
 | `bwrap_dbus_session` | Session D-Bus socket (unfiltered) |
 | `bwrap_dbus_system` | System D-Bus socket |
+| `bwrap_dbus_system_filtered` | Filtered system D-Bus via `xdg-dbus-proxy`; caller supplies rules |
 | `bwrap_dbus_filtered` | Filtered D-Bus via `xdg-dbus-proxy` with custom rules; fails if the proxy is unavailable |
 | `bwrap_dbus_common` | Pre-configured filtered D-Bus for typical GUI apps (XDG portals, notifications, status notifier, screen saver, login1, a11y); accepts extra rules |
 | `bwrap_themes` | GTK2/3, dconf, fontconfig, Qt, Kvantum, fonts, icons |
@@ -142,6 +143,15 @@ nothing to proxy.
 | GUI services | `org.freedesktop.Notifications`, `org.kde.StatusNotifierWatcher`, `org.freedesktop.ScreenSaver`, `org.freedesktop.login1`, `org.a11y.Bus` |
 
 Extra `--talk`/`--own` rules can be appended per-app.
+
+`bwrap_dbus_system_filtered` filters the system bus at
+`/run/dbus/system_bus_socket`. It accepts the same `xdg-dbus-proxy` rules as
+`bwrap_dbus_filtered` (`--talk`, `--see`, `--own`, `--call`, `--broadcast`) and
+loads no default rules. It binds the proxy at the standard system socket and
+sets `DBUS_SYSTEM_BUS_ADDRESS`, so applications that use the default address
+work without extra setup. System services are privileged, so grant only the
+names and methods the application needs. Do not combine it with
+`bwrap_dbus_system` for the same sandbox.
 
 When using filtered D-Bus, wrappers must call `bwrap_exec` instead of
 `exec bwrap` to ensure proxy cleanup.

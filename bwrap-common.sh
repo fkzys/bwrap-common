@@ -987,7 +987,36 @@ _dbus_fcitx5_rules() {
     )
 }
 
-# Start xdg-dbus-proxy with filter rules, bind socket into sandbox.
+# Internal: start a filtered xdg-dbus-proxy and wait for its socket.
+# Usage: _bwrap_dbus_proxy_start LABEL BUS_ADDR PROXY_SOCK [RULES...]
+_bwrap_dbus_proxy_start() {
+    local _label="$1" _bus_addr="$2" _proxy_sock="$3"
+    shift 3
+
+    xdg-dbus-proxy "$_bus_addr" "$_proxy_sock" --filter "$@" &
+    local _proxy_pid=$!
+    _BWRAP_DBUS_PROXY_PIDS+=("$_proxy_pid")
+    _BWRAP_DBUS_PROXY_SOCKETS+=("$_proxy_sock")
+
+    _bwrap_install_cleanup
+
+    local _attempts=0
+    while [[ ! -S "$_proxy_sock" ]]; do
+        if ! kill -0 "$_proxy_pid" 2>/dev/null; then
+            echo "$_label: proxy exited prematurely" >&2
+            return 1
+        fi
+        if (( ++_attempts > 50 )); then
+            echo "$_label: timeout waiting for proxy socket" >&2
+            kill "$_proxy_pid" 2>/dev/null || true
+            return 1
+        fi
+        sleep 0.1
+    done
+    return 0
+}
+
+# Start a filtered session bus proxy and bind its socket into the sandbox.
 # Must be paired with bwrap_exec (not raw `exec bwrap`).
 bwrap_dbus_filtered() {
     local _arrname="$1"; shift
@@ -1009,31 +1038,44 @@ bwrap_dbus_filtered() {
     fi
 
     local proxy_sock="${XDG_RUNTIME_DIR}/bwrap-dbus-proxy-$$-${RANDOM}.sock"
-
-    xdg-dbus-proxy "$bus_addr" "$proxy_sock" --filter "$@" &
-    local proxy_pid=$!
-    _BWRAP_DBUS_PROXY_PIDS+=("$proxy_pid")
-    _BWRAP_DBUS_PROXY_SOCKETS+=("$proxy_sock")
-
-    _bwrap_install_cleanup
-
-    local _attempts=0
-    while [[ ! -S "$proxy_sock" ]]; do
-        if ! kill -0 "$proxy_pid" 2>/dev/null; then
-            echo "bwrap_dbus_filtered: proxy exited prematurely" >&2
-            return 1
-        fi
-        if (( ++_attempts > 50 )); then
-            echo "bwrap_dbus_filtered: timeout waiting for proxy socket" >&2
-            kill "$proxy_pid" 2>/dev/null || true
-            return 1
-        fi
-        sleep 0.1
-    done
+    _bwrap_dbus_proxy_start bwrap_dbus_filtered "$bus_addr" "$proxy_sock" "$@" || return $?
 
     _df+=(
         --bind "$proxy_sock" "${XDG_RUNTIME_DIR}/bus"
         --setenv DBUS_SESSION_BUS_ADDRESS "unix:path=${XDG_RUNTIME_DIR}/bus"
+    )
+}
+
+# Start a filtered system bus proxy and bind it at the standard system socket.
+# RULES are passed to xdg-dbus-proxy; no default rules are loaded.
+# Do not combine with bwrap_dbus_system for the same sandbox.
+bwrap_dbus_system_filtered() {
+    local _arrname="$1"; shift
+    local -n _ds="$_arrname"
+
+    if ! command -v xdg-dbus-proxy >/dev/null 2>&1; then
+        echo "bwrap_dbus_system_filtered: xdg-dbus-proxy not found (required for filtered D-Bus)" >&2
+        return 1
+    fi
+
+    local bus_addr="${DBUS_SYSTEM_BUS_ADDRESS:-}"
+    if [[ -z "$bus_addr" ]]; then
+        if [[ -S /run/dbus/system_bus_socket ]]; then
+            bus_addr="unix:path=/run/dbus/system_bus_socket"
+        else
+            echo "bwrap_dbus_system_filtered: no system bus found, skipping" >&2
+            return 0
+        fi
+    fi
+
+    local proxy_sock="${XDG_RUNTIME_DIR}/bwrap-system-bus-proxy-$$-${RANDOM}.sock"
+    _bwrap_dbus_proxy_start bwrap_dbus_system_filtered "$bus_addr" "$proxy_sock" "$@" || return $?
+
+    _ds+=(
+        --perms 0755 --dir /run
+        --perms 0755 --dir /run/dbus
+        --bind "$proxy_sock" /run/dbus/system_bus_socket
+        --setenv DBUS_SYSTEM_BUS_ADDRESS "unix:path=/run/dbus/system_bus_socket"
     )
 }
 
