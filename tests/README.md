@@ -77,7 +77,9 @@ Each function is called with a fresh empty array, then the array contents are in
   skipped optional resource is no longer silent. `bwrap_resolve_files` is
   checked with both an explicit and an omitted (`default`) mode, and stays
   silent for non-path slash arguments (`user/repo`, URLs). `BWRAP_QUIET=1`
-  silences the warning. The `gpu` case runs only when `/dev/dri` is absent
+  silences the warning. The `gpu` case runs only when `/dev/dri`,
+  `/dev/nvidia*`, and `/dev/nvidia-caps` are all absent; the X11-socket case
+  runs only when `/tmp/.X11-unix` is absent
 
 ### Composite function tests
 
@@ -148,7 +150,7 @@ with an empty `PATH` so `xdg-dbus-proxy` is unavailable:
   fresh empty directory so no session socket exists; the system-bus case runs
   only when `/run/dbus/system_bus_socket` is absent
 - `bwrap_dbus_session` (unfiltered) warns on stderr and appends nothing when no
-  session bus exists
+  session bus exists, or when an explicit address points at a missing socket
 - against the real `xdg-dbus-proxy` — a hard dependency of the suite, installed
   by CI — the full `bwrap_dbus_system_filtered` path is exercised: the proxy
   starts, the socket appears, `/proc/<pid>/cmdline` shows `--filter` and the

@@ -38,6 +38,12 @@ XDG_RUNTIME_DIR="$DNB_RUNTIME" DBUS_SESSION_BUS_ADDRESS="" bwrap_dbus_session DS
 [[ ${#DSS[@]} -eq 0 ]] && grep -q "bwrap_dbus_session: no session bus found" "$DSSW" \
     && ok "unfiltered dbus_session warns when no bus exists" || fail "dbus_session no-bus warning absent"
 
+DSBADW="${TMPDIR_TEST}/dbus-session-badaddr.err"
+DSBAD=()
+DBUS_SESSION_BUS_ADDRESS="unix:path=/nonexistent/bus" bwrap_dbus_session DSBAD 2>"$DSBADW"
+[[ ${#DSBAD[@]} -eq 0 ]] && grep -q "bwrap_dbus_session: session bus socket not found" "$DSBADW" \
+    && ok "unfiltered dbus_session warns on an invalid address" || fail "dbus_session invalid-address warning absent"
+
 DSESS_PROXY_ARGS="${TMPDIR_TEST}/session-filtered-proxy-args"
 DSESS_ARRAY="${TMPDIR_TEST}/session-filtered-array"
 (

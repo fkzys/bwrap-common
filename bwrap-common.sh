@@ -370,14 +370,17 @@ bwrap_themes() {
     :
 }
 
-# ── Resolve file arguments to bind mounts ─────────────────────
+# Resolve file arguments to bind mounts.
+# Usage: bwrap_resolve_files BINDS_ARRAY ARGS_ARRAY [MODE] ARG...
+# MODE is any --*bind* flag (--ro-bind, --bind, --dev-bind and their -try
+# variants); when omitted it defaults to --ro-bind.
 bwrap_resolve_files() {
     local -n _binds=$1
     local -n _args=$2
     shift 2
     local _mode="--ro-bind"
     case "${1:-}" in
-        --ro-bind|--bind|--dev-bind)
+        --*bind*)
             _mode=$1
             shift
             ;;

@@ -25,9 +25,11 @@ any application that needs a specific value.
 Helpers that expose optional host resources (`bwrap_gpu`, `bwrap_wayland`,
 `bwrap_x11`, `bwrap_audio`, `bwrap_themes`, `bwrap_dbus_session`,
 `bwrap_dbus_system`, `bwrap_ssh_agent`, `bwrap_ro_bind_dir`, `bwrap_resolv`,
-`bwrap_resolve_files`) print a warning to stderr and bind nothing when the
-resource they were asked for is missing. Set `BWRAP_QUIET` to any non-empty
-value to silence these warnings; errors are never silenced.
+`bwrap_resolve_files`) print a warning to stderr when the resource they were
+asked for is missing, and leave it out of the sandbox (`bwrap_x11` still
+exports `DISPLAY` even when `/tmp/.X11-unix` is absent). Set `BWRAP_QUIET` to
+any non-empty value to silence these warnings, including the seccomp cache
+warnings; errors are never silenced.
 
 `XDG_CACHE_HOME` is normalized to `$HOME/.cache` inside the private home
 tmpfs. If the app's cache lives elsewhere, bind only that app's cache directory

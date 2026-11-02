@@ -309,7 +309,14 @@ XW=()
 grep -qxF "bwrap_x11: DISPLAY is not set; skipping" "$WARN_ERR" \
     && ok "x11 warns when DISPLAY is unset" || fail "x11 warning absent"
 
-if [[ ! -d /dev/dri ]]; then
+if [[ ! -d /tmp/.X11-unix ]]; then
+    XS=()
+    DISPLAY=":0" bwrap_x11 XS 2>"$WARN_ERR"
+    grep -qxF "bwrap_x11: /tmp/.X11-unix not found; X11 socket not bound" "$WARN_ERR" \
+        && ok "x11 warns when the X11 socket is missing" || fail "x11 socket warning absent"
+fi
+
+if [[ ! -d /dev/dri && ! -d /dev/nvidia-caps ]] && ! compgen -G '/dev/nvidia*' >/dev/null; then
     GW=()
     bwrap_gpu GW 2>"$WARN_ERR"
     grep -q "bwrap_gpu: no GPU device nodes found" "$WARN_ERR" \
