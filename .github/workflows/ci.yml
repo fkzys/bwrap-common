@@ -46,7 +46,7 @@ jobs:
             -v "$GITHUB_WORKSPACE:/src" -w /src \
             ubuntu:24.04 bash -c '
               apt-get update >/dev/null
-              apt-get install -y --no-install-recommends build-essential libseccomp-dev make >/dev/null
+              apt-get install -y --no-install-recommends build-essential libseccomp-dev make xdg-dbus-proxy >/dev/null
               make BUILD_DIR=/tmp/bwrap-build build
               BWRAP_SECCOMP_GEN=/tmp/bwrap-build/bwrap-seccomp-gen bash tests/arch-table-check.sh
               bash tests/test.sh
