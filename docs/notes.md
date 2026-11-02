@@ -73,7 +73,7 @@ secrets and loader/interpreter variables from the calling environment.
 | `bwrap_dbus_session` | Session D-Bus socket (unfiltered) |
 | `bwrap_dbus_system` | System D-Bus socket |
 | `bwrap_dbus_system_filtered` | Filtered system D-Bus via `xdg-dbus-proxy`; caller supplies rules |
-| `bwrap_dbus_filtered` | Filtered D-Bus via `xdg-dbus-proxy` with custom rules; fails if the proxy is unavailable |
+| `bwrap_dbus_filtered` | Filtered D-Bus via `xdg-dbus-proxy` with custom rules; fails if the proxy is unavailable and a session bus exists (with no bus it is skipped) |
 | `bwrap_dbus_common` | Pre-configured filtered D-Bus for session desktop apps (XDG portals, notifications, status notifier, screen saver, a11y); accepts extra rules |
 | `bwrap_themes` | GTK2/3, dconf, fontconfig, Qt, Kvantum, fonts, icons |
 | `bwrap_fcitx` | fcitx5 input method sockets + env |
@@ -111,7 +111,7 @@ secrets and loader/interpreter variables from the calling environment.
 - `$2` — display: `wayland`/`x11` (default `wayland`)
 - `$3` — network: `yes`/`no` (default `no`); `yes` adds `--share-net`
 - `$4` — malloc: `default` (default, enabled), `light`, or `no` (opt-out)
-- `$5` — D-Bus mode: `filtered` (default), `unfiltered`, `none`; `filtered` returns non-zero if `xdg-dbus-proxy` is unavailable
+- `$5` — D-Bus mode: `filtered` (default), `unfiltered`, `none`; `filtered` returns non-zero if `xdg-dbus-proxy` is unavailable when a bus exists (with no bus it is skipped)
 - `$6` — themes: `yes`/`no` (default `yes`)
 - `$7` — seccomp: `default`/`none` (default `default`); `default` returns non-zero if the default config or generator is unavailable; no blob is used; use `bwrap_seccomp` directly for an allowlist or `default` plus extra rules
 

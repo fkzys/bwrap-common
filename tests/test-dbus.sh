@@ -25,8 +25,10 @@ DF_RC=$?
 [[ $DF_RC -eq 1 ]] && ok "missing xdg-dbus-proxy fails closed" || fail "missing proxy returned $DF_RC"
 [[ ${#DF[@]} -eq 0 ]] && ok "missing proxy appends nothing" || fail "missing proxy appended ${DF[*]}"
 
+DNB_RUNTIME="${TMPDIR_TEST}/no-bus-runtime"
+mkdir -p "$DNB_RUNTIME"
 DNB=()
-PATH="$EMPTY_PATH" DBUS_SESSION_BUS_ADDRESS="" bwrap_dbus_filtered DNB 2>/dev/null
+XDG_RUNTIME_DIR="$DNB_RUNTIME" PATH="$EMPTY_PATH" DBUS_SESSION_BUS_ADDRESS="" bwrap_dbus_filtered DNB 2>/dev/null
 DNB_RC=$?
 [[ $DNB_RC -eq 0 && ${#DNB[@]} -eq 0 ]] && ok "no session bus is skipped before the proxy check" || fail "no session bus returned $DNB_RC"
 
