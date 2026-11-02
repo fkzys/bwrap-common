@@ -11,17 +11,32 @@
 VERSION="1.0.0"
 
 [[ -n "${_BWRAP_COMMON_LOADED:-}" ]] && return 0
-_BWRAP_COMMON_LOADED=1
-_BWRAP_COMMON_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+
+# Set before loading modules so any top-level module code can rely on it.
+XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+
+# Resolve this file after following symlinks so a symlinked entry point still
+# finds its sibling modules.
+_bwrap_common_dir=$(cd -- "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")" && pwd) || {
+    echo "bwrap-common: cannot resolve library directory from '${BASH_SOURCE[0]}'" >&2
+    return 1
+}
 
 # Load implementation modules; this file is the only supported entry point.
+for _bwrap_module in bwrap-common-seccomp.sh bwrap-common-dbus.sh; do
+    if [[ ! -r "${_bwrap_common_dir}/${_bwrap_module}" ]]; then
+        echo "bwrap-common: module not found: ${_bwrap_common_dir}/${_bwrap_module}" >&2
+        unset -v _bwrap_common_dir _bwrap_module
+        return 1
+    fi
+done
 # shellcheck source=./bwrap-common-seccomp.sh disable=SC1091
-. "$_BWRAP_COMMON_DIR/bwrap-common-seccomp.sh"
+. "${_bwrap_common_dir}/bwrap-common-seccomp.sh" || { unset -v _bwrap_common_dir _bwrap_module; return 1; }
 # shellcheck source=./bwrap-common-dbus.sh disable=SC1091
-. "$_BWRAP_COMMON_DIR/bwrap-common-dbus.sh"
-unset _BWRAP_COMMON_DIR
+. "${_bwrap_common_dir}/bwrap-common-dbus.sh" || { unset -v _bwrap_common_dir _bwrap_module; return 1; }
+unset -v _bwrap_common_dir _bwrap_module
 
-XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+_BWRAP_COMMON_LOADED=1
 
 # ── Validation ───────────────────────────────────────────────
 require_dir() {

@@ -92,7 +92,7 @@ bwrap_themes A
 bwrap_wayland A
 bwrap_audio A
 bwrap_dbus_common A
-# bwrap_dbus_system_filtered A --talk=org.freedesktop.UPower  # filtered system bus (optional)
+# bwrap_dbus_system_filtered A --call=org.freedesktop.UPower  # filtered system bus (optional, least privilege)
 bwrap_env_base A
 bwrap_hardened_malloc A default
 bwrap_seccomp A default

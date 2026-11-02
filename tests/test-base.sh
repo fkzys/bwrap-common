@@ -22,6 +22,17 @@ _tests_root="$PWD"
 ) && ok "entry point loads its modules from a foreign working directory" ||
     fail "entry point failed to load its modules from a foreign working directory"
 
+(
+    _symlink_dir="${TMPDIR_TEST}/symlink-entry"
+    mkdir -p "$_symlink_dir"
+    ln -sf "${_tests_root}/bwrap-common.sh" "${_symlink_dir}/bwrap-common.sh"
+    cd / || exit 1
+    bash -c '. "$1/bwrap-common.sh" &&
+        declare -f bwrap_seccomp >/dev/null 2>&1 &&
+        declare -f bwrap_dbus_common >/dev/null 2>&1' _ "$_symlink_dir"
+) && ok "symlinked entry point resolves its sibling modules" ||
+    fail "symlinked entry point failed to find its modules"
+
 # ── Function definitions ───────────────────────────────────
 
 section "Function definitions"

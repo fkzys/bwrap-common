@@ -177,7 +177,10 @@ loads no default rules. It binds the proxy at the standard system socket and
 sets `DBUS_SYSTEM_BUS_ADDRESS`, so applications that use the default address
 work without extra setup. Do not combine it with `bwrap_dbus_system` for the
 same sandbox. Prefer `--call` over full `--talk` where the installed
-`xdg-dbus-proxy` supports it.
+`xdg-dbus-proxy` supports it. Call it after `bwrap_base`/`bwrap_runtime_dir` so
+its `--dir /run` entries are not shadowed by a later `/run` mount. When neither
+`DBUS_SYSTEM_BUS_ADDRESS` nor `/run/dbus/system_bus_socket` exists it warns on
+stderr and returns 0, leaving the sandbox without a system bus.
 
 Typical additions:
 

@@ -47,7 +47,7 @@ The test script provides a minimal assertion framework and array inspection help
 
 ### Source guard
 
-Verifies that sourcing `bwrap-common.sh` a second time does not error — the `_BWRAP_COMMON_LOADED` guard variable prevents double initialization. A second check sources the entry point from a foreign working directory in a clean shell and confirms the seccomp and D-Bus modules are loaded, pinning the loader's path resolution.
+Verifies that sourcing `bwrap-common.sh` a second time does not error — the `_BWRAP_COMMON_LOADED` guard variable prevents double initialization. A second check sources the entry point from a foreign working directory in a clean shell and confirms the seccomp and D-Bus modules are loaded, pinning the loader's path resolution. A third check sources the entry point through a symlink and confirms its sibling modules still load, pinning the symlink resolution.
 
 ### Function definitions
 
@@ -133,6 +133,10 @@ with an empty `PATH` so `xdg-dbus-proxy` is unavailable:
   `_bwrap_dbus_proxy_start` stubbed it resolves the system bus address, forwards
   rules, creates `/run/dbus`, binds the proxy at the standard system socket, and
   sets `DBUS_SYSTEM_BUS_ADDRESS`
+- with a fake `xdg-dbus-proxy` that records its argv and creates the socket
+  (requires `python3`), the real `_bwrap_dbus_proxy_start` path is exercised:
+  the proxy is passed `--filter` and the rules, the wait-for-socket succeeds,
+  and `_bwrap_dbus_cleanup` removes the socket
 
 ### Architecture table cross-check (`arch-table-check.sh`)
 
@@ -178,7 +182,7 @@ It requires `bwrap`, the `libseccomp` headers, `cc`, and `make`.
 
 The GitHub Actions workflow (`.github/workflows/ci.yml`) runs on push/PR when `bwrap-common.sh`, `bwrap-common-*.sh`, `tests/**`, `seccomp/**`, `tools/**`, `Makefile`, or the workflow file itself changes:
 
-- **`shellcheck`** job: runs `shellcheck` with `-s bash` and suppressed informational codes (`SC2034`, `SC2178`, `SC2317`) on `bwrap-common.sh`, `bwrap-common-seccomp.sh`, `bwrap-common-dbus.sh`, `tests/seccomp-check.sh`, and `tests/arch-table-check.sh`
+- **`shellcheck`** job: runs `shellcheck` with `-s bash` on the library entry point, both modules, and all `tests/*.sh`; suppressed informational codes are `SC2034`, `SC2178`, `SC2317`, plus `SC1091`, `SC2015`, `SC2030`, `SC2031`, `SC2329` for the test scripts' idioms
 - **`test`** job: runs `bash tests/test.sh`
 - **`seccomp`** job: installs `bubblewrap`, `libseccomp-dev`, and `build-essential`, enables unprivileged user namespaces, and runs `tests/seccomp-check.sh`; it retries as root only when the script reports exit status `77` (sandbox environment unavailable), so real filter failures are not masked
 

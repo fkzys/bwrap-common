@@ -33,8 +33,6 @@ install:
 	install -Dm644 LICENSE $(DESTDIR)$(PREFIX)/share/licenses/$(pkgname)/LICENSE
 
 uninstall:
-	rm -f $(DESTDIR)$(PREFIX)/lib/bwrap-common/bwrap-common.sh
-	rm -f $(DESTDIR)$(PREFIX)/lib/bwrap-common/bwrap-seccomp-gen
 	rm -rf $(DESTDIR)$(PREFIX)/lib/bwrap-common/
 	rm -rf $(DESTDIR)$(PREFIX)/share/licenses/$(pkgname)/
 

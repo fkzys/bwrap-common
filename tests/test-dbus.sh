@@ -49,11 +49,12 @@ DSESS_LINES=()
 [[ -f "$DSESS_ARRAY" ]] && mapfile -t DSESS_LINES < "$DSESS_ARRAY"
 if [[ $DS_RC -eq 0 && "${DSESS_PROXY_LINES[0]:-}" == "bwrap_dbus_filtered" &&
       "${DSESS_PROXY_LINES[1]:-}" == "unix:path=/nonexistent" &&
-      "${DSESS_PROXY_LINES[3]:-}" == "--talk=org.example.Session" ]]; then
-    ok "session filtered resolves address and forwards rules"
+      "${DSESS_PROXY_LINES[2]:-}" == "${XDG_RUNTIME_DIR}/bwrap-dbus-proxy-"*.sock ]]; then
+    ok "session filtered resolves address and proxy socket"
 else
     fail "session filtered proxy args: ${DSESS_PROXY_LINES[*]:-none} (rc=$DS_RC)"
 fi
+has_arg DSESS_PROXY_LINES "--talk=org.example.Session" && ok "session filtered forwards rules" || fail "session filtered rules not forwarded"
 has_arg DSESS_LINES "${XDG_RUNTIME_DIR}/bus" && ok "session filtered binds the session bus socket" || fail "session filtered missing bus bind"
 has_triple DSESS_LINES "--setenv" "DBUS_SESSION_BUS_ADDRESS" "unix:path=${XDG_RUNTIME_DIR}/bus" && ok "session filtered exports the session bus address" || fail "session filtered missing bus env"
 
@@ -139,15 +140,55 @@ DSYS_LINES=()
 [[ -f "$DSYS_ARRAY" ]] && mapfile -t DSYS_LINES < "$DSYS_ARRAY"
 if [[ $DSW_RC -eq 0 && "${DSYS_PROXY_LINES[0]:-}" == "bwrap_dbus_system_filtered" &&
       "${DSYS_PROXY_LINES[1]:-}" == "unix:path=/nonexistent" &&
-      "${DSYS_PROXY_LINES[3]:-}" == "--talk=org.freedesktop.UPower" &&
-      "${DSYS_PROXY_LINES[4]:-}" == "--own=org.example.System" ]]; then
-    ok "system filtered resolves address and forwards rules"
+      "${DSYS_PROXY_LINES[2]:-}" == "${XDG_RUNTIME_DIR}/bwrap-system-bus-proxy-"*.sock ]]; then
+    ok "system filtered resolves address and proxy socket"
 else
     fail "system filtered proxy args: ${DSYS_PROXY_LINES[*]:-none} (rc=$DSW_RC)"
 fi
+has_arg DSYS_PROXY_LINES "--talk=org.freedesktop.UPower" && ok "system filtered forwards talk rules" || fail "system filtered talk rule not forwarded"
+has_arg DSYS_PROXY_LINES "--own=org.example.System" && ok "system filtered forwards own rules" || fail "system filtered own rule not forwarded"
 has_arg DSYS_LINES "/run" && ok "system filtered creates /run" || fail "system filtered missing /run"
 has_arg DSYS_LINES "/run/dbus" && ok "system filtered creates /run/dbus" || fail "system filtered missing /run/dbus"
 has_arg DSYS_LINES "/run/dbus/system_bus_socket" && ok "system filtered binds the system bus socket" || fail "system filtered missing system bus bind"
 has_triple DSYS_LINES "--setenv" "DBUS_SYSTEM_BUS_ADDRESS" "unix:path=/run/dbus/system_bus_socket" && ok "system filtered exports the system bus address" || fail "system filtered missing system bus env"
+
+# Real proxy start and cleanup: the fake xdg-dbus-proxy records argv and creates
+# the socket, so the unfaked _bwrap_dbus_proxy_start path (including --filter) and
+# socket cleanup are exercised.  Requires python3 to create a unix socket.
+REAL_PROXY_BIN="${TMPDIR_TEST}/real-proxy-bin"
+mkdir -p "$REAL_PROXY_BIN"
+cat > "${REAL_PROXY_BIN}/xdg-dbus-proxy" <<'PROXY'
+#!/bin/sh
+printf '%s\n' "$@" > "$RECORD_ARGS"
+exec python3 -c 'import socket,sys,time; s=socket.socket(socket.AF_UNIX); s.bind(sys.argv[1]); s.listen(1); time.sleep(30)' "$2"
+PROXY
+chmod +x "${REAL_PROXY_BIN}/xdg-dbus-proxy"
+
+if command -v python3 >/dev/null 2>&1; then
+    RS_PRESENT="${TMPDIR_TEST}/system-real-sock-present"
+    RS_GONE="${TMPDIR_TEST}/system-real-sock-gone"
+    RS_ARGS="${TMPDIR_TEST}/system-real-proxy-args"
+    (
+        export RECORD_ARGS="$RS_ARGS"
+        DSWR=()
+        PATH="${REAL_PROXY_BIN}:${PATH}" DBUS_SYSTEM_BUS_ADDRESS="unix:path=/nonexistent" \
+            bwrap_dbus_system_filtered DSWR --call=org.freedesktop.UPower
+        _rc=$?
+        _lines=()
+        [[ -f "$RS_ARGS" ]] && mapfile -t _lines < "$RS_ARGS"
+        _sock="${_lines[1]:-}"
+        [[ -n "$_sock" && -S "$_sock" ]] && : > "$RS_PRESENT"
+        _bwrap_dbus_cleanup
+        [[ -n "$_sock" && ! -e "$_sock" ]] && : > "$RS_GONE"
+        exit "$_rc"
+    )
+    RS_RC=$?
+    RS_LINES=()
+    [[ -f "$RS_ARGS" ]] && mapfile -t RS_LINES < "$RS_ARGS"
+    [[ $RS_RC -eq 0 && -f "$RS_PRESENT" ]] && ok "real proxy start waits for the socket" || fail "real proxy start rc=$RS_RC"
+    has_arg RS_LINES "--filter" && ok "real proxy receives --filter" || fail "real proxy missing --filter"
+    has_arg RS_LINES "--call=org.freedesktop.UPower" && ok "real proxy forwards the rule" || fail "real proxy missing rule"
+    [[ -f "$RS_GONE" ]] && ok "cleanup removes the proxy socket" || fail "cleanup left the proxy socket"
+fi
 
 
