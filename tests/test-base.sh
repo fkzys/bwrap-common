@@ -316,7 +316,7 @@ if [[ ! -d /tmp/.X11-unix ]]; then
         && ok "x11 warns when the X11 socket is missing" || fail "x11 socket warning absent"
 fi
 
-if [[ ! -d /dev/dri && ! -d /dev/nvidia-caps ]] && ! compgen -G '/dev/nvidia*' >/dev/null; then
+if [[ ! -d /dev/dri ]] && ! compgen -G '/dev/nvidia*' >/dev/null; then
     GW=()
     bwrap_gpu GW 2>"$WARN_ERR"
     grep -q "bwrap_gpu: no GPU device nodes found" "$WARN_ERR" \

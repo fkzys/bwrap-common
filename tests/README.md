@@ -77,9 +77,9 @@ Each function is called with a fresh empty array, then the array contents are in
   skipped optional resource is no longer silent. `bwrap_resolve_files` is
   checked with both an explicit and an omitted (`default`) mode, and stays
   silent for non-path slash arguments (`user/repo`, URLs). `BWRAP_QUIET=1`
-  silences the warning. The `gpu` case runs only when `/dev/dri`,
-  `/dev/nvidia*`, and `/dev/nvidia-caps` are all absent; the X11-socket case
-  runs only when `/tmp/.X11-unix` is absent
+  silences the warning. The `gpu` case runs only when `/dev/dri` is absent and
+  no `/dev/nvidia*` exists; the X11-socket case runs only when
+  `/tmp/.X11-unix` is absent
 
 ### Composite function tests
 
