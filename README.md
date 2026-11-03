@@ -86,7 +86,7 @@ Typical GUI wrapper using high-level composites:
 
 ```sh
 A=()
-bwrap_gui_setup A yes yes tmpfs          # network, gpu, shm=tmpfs
+bwrap_gui_setup A yes yes tmpfs                              # network, gpu, shm=tmpfs
 bwrap_bind_dir A "${HOME}/.config/app" "${HOME}/Data"
 bwrap_ro_bind_dir A "${MEDIA_DIR}"
 bwrap_audio A
@@ -98,7 +98,7 @@ Equivalent using low-level helpers:
 
 ```sh
 A=()
-bwrap_base A tmpfs                            # shm=tmpfs; use "bind" only if needed
+bwrap_base A tmpfs yes                                       # shm=tmpfs, yes=clearenv
 bwrap_lib64 A
 bwrap_gpu A
 bwrap_resolv A
@@ -113,7 +113,7 @@ bwrap_dbus_common A
 bwrap_env_base A
 bwrap_hardened_malloc A default
 bwrap_seccomp A default
-bwrap_sandbox A yes
+bwrap_sandbox A yes yes                                      # yes=net, yes=new-session
 bwrap_exec "${A[@]}" -- /usr/bin/app "$@"
 ```
 
