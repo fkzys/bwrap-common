@@ -196,7 +196,7 @@ bwrap_audio() {
     :
 }
 
-# ── unfiltered D-Bus session ────────────────────────────────
+# ── unfiltered D-Bus session ──────────────────────────────────
 bwrap_dbus_session() {
     local -n _arr=$1
     local _bus="${DBUS_SESSION_BUS_ADDRESS:-}"
@@ -524,7 +524,7 @@ _bwrap_install_cleanup() {
     fi
 
     # Capture the caller's trap without slicing trap -p output.
-    # The temporary trap() function receives the command as $2 when eval parses the builtin's output
+    # The temporary trap() function receives the command as $2 when eval parses the builtin's output.
     # It does not execute the caller's command.
     _previous=$(
         trap() { printf '%s' "$2"; }
