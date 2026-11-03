@@ -11,9 +11,38 @@
 VERSION="1.0.0"
 
 [[ -n "${_BWRAP_COMMON_LOADED:-}" ]] && return 0
-_BWRAP_COMMON_LOADED=1
 
+# Set before loading modules so any top-level module code can rely on it.
 XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+
+# diagnostics; suppressed by BWRAP_QUIET.
+_bwrap_warn() {
+    [[ -n "${BWRAP_QUIET:-}" ]] && return 0
+    printf '%s\n' "$*" >&2
+}
+
+# Resolve this file after following symlinks so a symlinked entry point still
+# finds its sibling modules.
+_bwrap_common_dir=$(cd -- "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")" && pwd) || {
+    echo "bwrap-common: cannot resolve library directory from '${BASH_SOURCE[0]}'" >&2
+    return 1
+}
+
+# Load implementation modules; this file is the only supported entry point.
+for _bwrap_module in bwrap-common-seccomp.sh bwrap-common-dbus.sh; do
+    if [[ ! -r "${_bwrap_common_dir}/${_bwrap_module}" ]]; then
+        echo "bwrap-common: module not found: ${_bwrap_common_dir}/${_bwrap_module}" >&2
+        unset -v _bwrap_common_dir _bwrap_module
+        return 1
+    fi
+done
+# shellcheck source=./bwrap-common-seccomp.sh disable=SC1091
+. "${_bwrap_common_dir}/bwrap-common-seccomp.sh" || { unset -v _bwrap_common_dir _bwrap_module; return 1; }
+# shellcheck source=./bwrap-common-dbus.sh disable=SC1091
+. "${_bwrap_common_dir}/bwrap-common-dbus.sh" || { unset -v _bwrap_common_dir _bwrap_module; return 1; }
+unset -v _bwrap_common_dir _bwrap_module
+
+_BWRAP_COMMON_LOADED=1
 
 # ── Validation ───────────────────────────────────────────────
 require_dir() {
@@ -78,12 +107,13 @@ bwrap_base() {
 # ── GPU + NVIDIA ──────────────────────────────────────────────
 bwrap_gpu() {
     local -n _arr=$1
-    [[ -d /dev/dri ]] && _arr+=(--dev-bind /dev/dri /dev/dri)
-    local dev
+    local _found=0 dev
+    [[ -d /dev/dri ]] && { _arr+=(--dev-bind /dev/dri /dev/dri); _found=1; }
     for dev in /dev/nvidia{0,1,2,3,ctl,-modeset,-uvm,-uvm-tools}; do
-        [[ -e "$dev" ]] && _arr+=(--dev-bind "$dev" "$dev")
+        [[ -e "$dev" ]] && { _arr+=(--dev-bind "$dev" "$dev"); _found=1; }
     done
-    [[ -d /dev/nvidia-caps ]] && _arr+=(--dev-bind /dev/nvidia-caps /dev/nvidia-caps)
+    [[ -d /dev/nvidia-caps ]] && { _arr+=(--dev-bind /dev/nvidia-caps /dev/nvidia-caps); _found=1; }
+    (( _found )) || _bwrap_warn "bwrap_gpu: no GPU device nodes found (/dev/dri, /dev/nvidia*)"
     :
 }
 
@@ -100,10 +130,17 @@ bwrap_lib64() {
 # ── resolv.conf (often symlink into /run) ─────────────────────
 bwrap_resolv() {
     local -n _arr=$1
-    if [[ -L /etc/resolv.conf ]]; then
-        local _rd
-        _rd="$(dirname "$(realpath /etc/resolv.conf)")"
+    [[ -L /etc/resolv.conf ]] || return 0
+    local _real _rd
+    _real="$(realpath /etc/resolv.conf 2>/dev/null)" || {
+        _bwrap_warn "bwrap_resolv: cannot resolve /etc/resolv.conf; skipping"
+        return 0
+    }
+    _rd="$(dirname "$_real")"
+    if [[ -n "$_rd" && "$_rd" != "/" && -d "$_rd" ]]; then
         _arr+=(--ro-bind "$_rd" "$_rd")
+    else
+        _bwrap_warn "bwrap_resolv: no usable resolver directory ($_rd); skipping"
     fi
 }
 
@@ -117,31 +154,45 @@ bwrap_wayland() {
             --setenv WAYLAND_DISPLAY "${WAYLAND_DISPLAY:-wayland-1}"
         )
         [[ -f "${_wl}.lock" ]] && _arr+=(--ro-bind "${_wl}.lock" "${_wl}.lock")
+    else
+        _bwrap_warn "bwrap_wayland: no Wayland socket at $_wl; skipping"
     fi
 }
 
 # ── X11 / XWayland ────────────────────────────────────────────
 bwrap_x11() {
     local -n _arr=$1
-    if [[ -n "${DISPLAY:-}" ]]; then
-        [[ -d /tmp/.X11-unix ]] && _arr+=(--ro-bind /tmp/.X11-unix /tmp/.X11-unix)
-        _arr+=(--setenv DISPLAY "${DISPLAY}")
-        if [[ -n "${XAUTHORITY:-}" && -f "${XAUTHORITY}" ]]; then
-            _arr+=(--ro-bind "${XAUTHORITY}" "${XAUTHORITY}" --setenv XAUTHORITY "${XAUTHORITY}")
-        elif [[ -f "${HOME}/.Xauthority" ]]; then
-            _arr+=(--ro-bind "${HOME}/.Xauthority" "${HOME}/.Xauthority" \
-                   --setenv XAUTHORITY "${HOME}/.Xauthority")
-        fi
+    if [[ -z "${DISPLAY:-}" ]]; then
+        _bwrap_warn "bwrap_x11: DISPLAY is not set; skipping"
+        return 0
+    fi
+    if [[ -d /tmp/.X11-unix ]]; then
+        _arr+=(--ro-bind /tmp/.X11-unix /tmp/.X11-unix)
+    else
+        _bwrap_warn "bwrap_x11: /tmp/.X11-unix not found; X11 socket not bound"
+    fi
+    _arr+=(--setenv DISPLAY "${DISPLAY}")
+    if [[ -n "${XAUTHORITY:-}" && -f "${XAUTHORITY}" ]]; then
+        _arr+=(--ro-bind "${XAUTHORITY}" "${XAUTHORITY}" --setenv XAUTHORITY "${XAUTHORITY}")
+    elif [[ -f "${HOME}/.Xauthority" ]]; then
+        _arr+=(--ro-bind "${HOME}/.Xauthority" "${HOME}/.Xauthority" \
+               --setenv XAUTHORITY "${HOME}/.Xauthority")
     fi
 }
 
 # ── Audio (PipeWire + PulseAudio) ─────────────────────────────
 bwrap_audio() {
     local -n _arr=$1
-    [[ -S "${XDG_RUNTIME_DIR}/pipewire-0" ]] && \
+    local _found=0
+    [[ -S "${XDG_RUNTIME_DIR}/pipewire-0" ]] && {
         _arr+=(--bind "${XDG_RUNTIME_DIR}/pipewire-0" "${XDG_RUNTIME_DIR}/pipewire-0")
-    [[ -d "${XDG_RUNTIME_DIR}/pulse" ]] && \
+        _found=1
+    }
+    [[ -d "${XDG_RUNTIME_DIR}/pulse" ]] && {
         _arr+=(--bind "${XDG_RUNTIME_DIR}/pulse" "${XDG_RUNTIME_DIR}/pulse")
+        _found=1
+    }
+    (( _found )) || _bwrap_warn "bwrap_audio: no PipeWire or PulseAudio socket found"
     :
 }
 
@@ -156,12 +207,16 @@ bwrap_dbus_session() {
                 --bind "$_bus_path" "$_bus_path"
                 --setenv DBUS_SESSION_BUS_ADDRESS "$_bus"
             )
+        else
+            _bwrap_warn "bwrap_dbus_session: session bus socket not found: $_bus_path"
         fi
     elif [[ -S "${XDG_RUNTIME_DIR}/bus" ]]; then
         _arr+=(
             --bind "${XDG_RUNTIME_DIR}/bus" "${XDG_RUNTIME_DIR}/bus"
             --setenv DBUS_SESSION_BUS_ADDRESS "unix:path=${XDG_RUNTIME_DIR}/bus"
         )
+    else
+        _bwrap_warn "bwrap_dbus_session: no session bus found; skipping"
     fi
 }
 
@@ -174,13 +229,128 @@ bwrap_dbus_system() {
             --perms 0755 --dir /run/dbus
             --bind /run/dbus/system_bus_socket /run/dbus/system_bus_socket
         )
+    else
+        _bwrap_warn "bwrap_dbus_system: no system bus found; skipping"
     fi
+}
+
+# ── D-Bus filtered proxy ─────────────────────────────────────
+# Start a filtered session bus proxy and bind its socket into the sandbox.
+# Must be paired with bwrap_exec (not raw `exec bwrap`).
+bwrap_dbus_filtered() {
+    local _arrname="$1"; shift
+    local -n _df="$_arrname"
+
+    local bus_addr="${DBUS_SESSION_BUS_ADDRESS:-}"
+    if [[ -z "$bus_addr" ]]; then
+        if [[ -S "${XDG_RUNTIME_DIR}/bus" ]]; then
+            bus_addr="unix:path=${XDG_RUNTIME_DIR}/bus"
+        else
+            _bwrap_warn "bwrap_dbus_filtered: no session bus found, skipping"
+            return 0
+        fi
+    fi
+
+    if ! command -v xdg-dbus-proxy >/dev/null 2>&1; then
+        echo "bwrap_dbus_filtered: xdg-dbus-proxy not found (required for filtered D-Bus)" >&2
+        return 1
+    fi
+
+    local proxy_sock="${XDG_RUNTIME_DIR}/bwrap-dbus-proxy-$$-${RANDOM}.sock"
+    _bwrap_dbus_proxy_start bwrap_dbus_filtered "$bus_addr" "$proxy_sock" "$@" || return $?
+
+    _df+=(
+        --bind "$proxy_sock" "${XDG_RUNTIME_DIR}/bus"
+        --setenv DBUS_SESSION_BUS_ADDRESS "unix:path=${XDG_RUNTIME_DIR}/bus"
+    )
+}
+
+# Start a filtered system bus proxy and bind it at the standard system socket.
+# RULES are passed to xdg-dbus-proxy; no default rules are loaded.
+# Do not combine with bwrap_dbus_system for the same sandbox.
+bwrap_dbus_system_filtered() {
+    local _arrname="$1"; shift
+    local -n _ds="$_arrname"
+
+    local bus_addr="${DBUS_SYSTEM_BUS_ADDRESS:-}"
+    if [[ -z "$bus_addr" ]]; then
+        if [[ -S /run/dbus/system_bus_socket ]]; then
+            bus_addr="unix:path=/run/dbus/system_bus_socket"
+        else
+            _bwrap_warn "bwrap_dbus_system_filtered: no system bus found, skipping"
+            return 0
+        fi
+    fi
+
+    if ! command -v xdg-dbus-proxy >/dev/null 2>&1; then
+        echo "bwrap_dbus_system_filtered: xdg-dbus-proxy not found (required for filtered D-Bus)" >&2
+        return 1
+    fi
+
+    local proxy_sock="${XDG_RUNTIME_DIR}/bwrap-system-bus-proxy-$$-${RANDOM}.sock"
+    _bwrap_dbus_proxy_start bwrap_dbus_system_filtered "$bus_addr" "$proxy_sock" "$@" || return $?
+
+    _ds+=(
+        --perms 0755 --dir /run
+        --perms 0755 --dir /run/dbus
+        --bind "$proxy_sock" /run/dbus/system_bus_socket
+        --setenv DBUS_SYSTEM_BUS_ADDRESS "unix:path=/run/dbus/system_bus_socket"
+    )
+}
+
+# Filtered D-Bus for typical GUI apps (portals + common services).
+# Usage: bwrap_dbus_common ARRAYNAME [EXTRA_RULES...]
+bwrap_dbus_common() {
+    local _arrname="$1"; shift
+    local rules=()
+    _dbus_portal_rules rules
+    _dbus_gui_service_rules rules
+    rules+=("$@")
+    bwrap_dbus_filtered "$_arrname" "${rules[@]}"
+}
+
+# ── seccomp filter ───────────────────────────────────────────
+# bwrap_seccomp ARRAYNAME MODE [EXTRA_RULE...]
+#   none     no seccomp filter
+#   default  compile seccomp/default.conf at runtime and cache the result
+#   default EXTRA_RULE...
+#            compile one combined default + extra blocklist filter; each
+#            EXTRA_RULE is a blocklist line ("syscall EPERM|ENOSYS|ALLOW [condition]")
+#            merged into the default filter (user rules win on duplicates)
+#   <spec>   syscall allowlist (space/comma separated), compiled on first use
+#            and cached like the other filters
+# Filters are cached under BWRAP_SECCOMP_CACHE_DIR.  If the cache is
+# unavailable the generator runs into a temporary file in XDG_RUNTIME_DIR
+# (tmpfs), which is opened and unlinked immediately; when that is unavailable
+# too, the function fails closed.
+# Env vars:
+#   BWRAP_SECCOMP_CONF       default blocklist source
+#                            (${BWRAP_SECCOMP_DIR}/default.conf)
+#   BWRAP_SECCOMP_DIR        default seccomp source dir (/usr/lib/bwrap-common/seccomp)
+#   BWRAP_SECCOMP_GEN        rule compiler (/usr/lib/bwrap-common/bwrap-seccomp-gen)
+#   BWRAP_SECCOMP_CACHE_DIR  compiled filter cache (~/.cache/bwrap-common/seccomp)
+#   BWRAP_SECCOMP_ARCH       override uname -m (cross-arch testing)
+bwrap_seccomp() {
+    local _arrname="$1" _mode="$2"
+    case "$_mode" in
+        none)
+            return 0
+            ;;
+        default)
+            _bwrap_seccomp_default "$_arrname" "${@:3}"
+            return $?
+            ;;
+        *)
+            _bwrap_seccomp_allowlist "$_arrname" "$_mode"
+            return $?
+            ;;
+    esac
 }
 
 # ── Optional read-only home paths (themes, fonts, Qt) ─────────
 bwrap_themes() {
     local -n _arr=$1
-    local p
+    local p _found=0
     for p in \
         "${HOME}/.gtkrc-2.0" \
         "${HOME}/.config/gtk-2.0" \
@@ -194,20 +364,32 @@ bwrap_themes() {
         "${HOME}/.local/share/fonts" \
         "${HOME}/.local/share/icons" \
         "${HOME}/.icons"; do
-        [[ -e "$p" ]] && _arr+=(--ro-bind "$p" "$p")
+        [[ -e "$p" ]] && { _arr+=(--ro-bind "$p" "$p"); _found=1; }
     done
+    (( _found )) || _bwrap_warn "bwrap_themes: no theme/config paths found"
     :
 }
 
-# ── Resolve file arguments to bind mounts ─────────────────────
+# Resolve file arguments to bind mounts.
+# Usage: bwrap_resolve_files BINDS_ARRAY ARGS_ARRAY [MODE] ARG...
+# MODE is one of --ro-bind, --bind, --dev-bind or their -try variants; when
+# omitted it defaults to --ro-bind.
 bwrap_resolve_files() {
     local -n _binds=$1
     local -n _args=$2
-    local _mode="${3:---ro-bind}"
-    shift 3
+    shift 2
+    local _mode="--ro-bind"
+    case "${1:-}" in
+        --ro-bind|--bind|--dev-bind|--ro-bind-try|--bind-try|--dev-bind-try)
+            _mode=$1
+            shift
+            ;;
+    esac
     local arg
     for arg in "$@"; do
-        if [[ "$arg" != -* && -e "$arg" ]]; then
+        if [[ "$arg" == -* ]]; then
+            _args+=("$arg")
+        elif [[ -e "$arg" ]]; then
             local _real _dir
             _real="$(realpath "$arg")"
             _dir="$(dirname "$_real")"
@@ -220,6 +402,9 @@ bwrap_resolve_files() {
             esac
             _args+=("$_real")
         else
+            case "$arg" in
+                /*|./*|../*) _bwrap_warn "bwrap_resolve_files: not found, left as-is: $arg" ;;
+            esac
             _args+=("$arg")
         fi
     done
@@ -275,7 +460,11 @@ bwrap_ro_bind_dir() {
     shift
     local _d
     for _d in "$@"; do
-        [[ -d "$_d" ]] && _arr+=(--ro-bind "$_d" "$_d")
+        if [[ -d "$_d" ]]; then
+            _arr+=(--ro-bind "$_d" "$_d")
+        else
+            _bwrap_warn "bwrap_ro_bind_dir: skipping missing directory: $_d"
+        fi
     done
     :
 }
@@ -317,90 +506,6 @@ bwrap_sandbox() {
     _arr+=(--die-with-parent)
 }
 
-# ── seccomp filters ─────────────────────────────────────────
-_BWRAP_SECCOMP_FDS=()
-
-# bwrap_seccomp ARRAYNAME MODE
-#   none     no seccomp filter
-#   default  precompiled default.<arch>.bpf from BWRAP_SECCOMP_DIR
-#   <spec>   syscall allowlist (space/comma separated), compiled on first
-#            use and cached under BWRAP_SECCOMP_CACHE_DIR
-# Env vars:
-#   BWRAP_SECCOMP_DIR        precompiled filter dir (/usr/lib/bwrap-common/seccomp)
-#   BWRAP_SECCOMP_GEN        allowlist compiler (/usr/lib/bwrap-common/bwrap-seccomp-gen)
-#   BWRAP_SECCOMP_CACHE_DIR  compiled filter cache (~/.cache/bwrap-common/seccomp)
-#   BWRAP_SECCOMP_ARCH       override uname -m (cross-arch testing)
-bwrap_seccomp() {
-    local _arrname="$1" _mode="$2"
-    case "$_mode" in
-        none)
-            return 0
-            ;;
-        default)
-            local _dir="${BWRAP_SECCOMP_DIR:-/usr/lib/bwrap-common/seccomp}"
-            local _file
-            _file="${_dir}/default.$(_bwrap_seccomp_arch).bpf"
-            _bwrap_seccomp_use "$_arrname" "$_file"
-            return $?
-            ;;
-        *)
-            _bwrap_seccomp_allowlist "$_arrname" "$_mode"
-            return $?
-            ;;
-    esac
-}
-
-# Internal: report a seccomp setup problem.
-_bwrap_seccomp_fail() {
-    echo "bwrap_seccomp: $1" >&2
-    return 1
-}
-
-# Internal: native architecture for the default blob.
-_bwrap_seccomp_arch() {
-    printf '%s' "${BWRAP_SECCOMP_ARCH:-$(uname -m)}"
-}
-
-# Internal: expected AUDIT_ARCH bytes in the compiled BPF header, in the
-# target's native byte order.  tests/arch-table-check.sh compares this table
-# with blobs generated by tools/seccomp-gen.c.
-_bwrap_seccomp_arch_magic() {
-    case "${1:-}" in
-        x86_64)               printf '%s' 3e0000c0 ;;
-        aarch64)              printf '%s' b70000c0 ;;
-        i386|i486|i586|i686)  printf '%s' 03000040 ;;
-        armv6l|armv7l|armv8l) printf '%s' 28000040 ;;
-        riscv64)              printf '%s' f30000c0 ;;
-        ppc64le)              printf '%s' 150000c0 ;;
-        ppc64)                printf '%s' 80000015 ;;
-        ppc)                  printf '%s' 00000014 ;;
-        s390x)                printf '%s' 80000016 ;;
-        s390)                 printf '%s' 00000016 ;;
-        loongarch64)          printf '%s' 020100c0 ;;
-        mips)                 printf '%s' 00000008 ;;
-        mipsel)               printf '%s' 08000040 ;;
-        mips64)               printf '%s' 80000008 ;;
-        mips64el)             printf '%s' 080000c0 ;;
-        mips64n32)            printf '%s' a0000008 ;;
-        mips64n32el)          printf '%s' 080000e0 ;;
-        parisc)               printf '%s' 0000000f ;;
-        parisc64)             printf '%s' 8000000f ;;
-        *)                    return 1 ;;
-    esac
-}
-
-# Internal: close filter descriptors inherited by bwrap.
-_bwrap_seccomp_close_fds() {
-    local _fd
-    if (( ${#_BWRAP_SECCOMP_FDS[@]} == 0 )); then
-        return 0
-    fi
-    for _fd in "${_BWRAP_SECCOMP_FDS[@]}"; do
-        exec {_fd}<&- 2>/dev/null || true
-    done
-    _BWRAP_SECCOMP_FDS=()
-}
-
 # Internal: run cleanup, then the caller's original EXIT trap.
 _bwrap_exit_trap() {
     local _status=$?
@@ -431,109 +536,11 @@ _bwrap_install_cleanup() {
     _BWRAP_PREVIOUS_EXIT_TRAP="$_previous"
     trap '_bwrap_exit_trap' EXIT
 }
-
-# Internal: validate FILE, open it and append --seccomp FD to ARRAYNAME.
-_bwrap_seccomp_use() {
-    local _arrname="$1" _file="$2"
-    local -n _arr="$_arrname"
-
-    local _arg
-    for _arg in "${_arr[@]}"; do
-        if [[ "$_arg" == "--seccomp" ]]; then
-            echo "bwrap_seccomp: array already contains --seccomp" >&2
-            return 1
-        fi
-    done
-
-    [[ -f "$_file" && -r "$_file" ]] || {
-        _bwrap_seccomp_fail "filter not found or unreadable: $_file"
-        return 1
-    }
-
-    local _size
-    _size=$(stat -c %s "$_file" 2>/dev/null)
-    [[ -n "$_size" ]] || {
-        _bwrap_seccomp_fail "cannot stat filter: $_file"
-        return 1
-    }
-    if (( _size <= 0 || _size % 8 != 0 )); then
-        _bwrap_seccomp_fail "invalid filter size ($_size): $_file"
-        return 1
-    fi
-
-    local _arch _want _got
-    _arch=$(_bwrap_seccomp_arch)
-    if ! _want=$(_bwrap_seccomp_arch_magic "$_arch"); then
-        _bwrap_seccomp_fail "unsupported architecture: $_arch"
-        return 1
-    fi
-    _got=$(od -An -tx1 -j12 -N4 "$_file" 2>/dev/null | tr -d ' \n')
-    if [[ "$_got" != "$_want" ]]; then
-        _bwrap_seccomp_fail "filter arch mismatch (want $_want, got ${_got:-none}): $_file"
-        return 1
-    fi
-
-    local _fd
-    if ! exec {_fd}< "$_file"; then
-        _bwrap_seccomp_fail "cannot open filter: $_file"
-        return 1
-    fi
-    _BWRAP_SECCOMP_FDS+=("$_fd")
-    _bwrap_install_cleanup
-    _arr+=(--seccomp "$_fd")
-    return 0
-}
-
-# Internal: compile SPEC to a cached cBPF file, then apply it.
-_bwrap_seccomp_allowlist() {
-    local _arrname="$1" _spec="$2"
-
-    if ! command -v sha256sum >/dev/null 2>&1; then
-        echo "bwrap_seccomp: sha256sum not found" >&2
-        return 1
-    fi
-    local _gen="${BWRAP_SECCOMP_GEN:-/usr/lib/bwrap-common/bwrap-seccomp-gen}"
-    if [[ ! -x "$_gen" ]]; then
-        echo "bwrap_seccomp: seccomp generator not found: $_gen" >&2
-        return 1
-    fi
-    if [[ -z "$_spec" ]]; then
-        echo "bwrap_seccomp: empty allowlist spec" >&2
-        return 1
-    fi
-
-    local _cache="${BWRAP_SECCOMP_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/bwrap-common/seccomp}"
-    local _hash _arch
-    _arch=$(_bwrap_seccomp_arch)
-    _hash=$(printf 'bwrap-common-seccomp-v2\n%s\n%s\n' "$_arch" "$_spec" | sha256sum | cut -d' ' -f1)
-    if [[ -z "$_hash" ]]; then
-        echo "bwrap_seccomp: failed to compute cache key" >&2
-        return 1
-    fi
-
-    local _cache_file="${_cache}/${_hash}.bpf"
-    if [[ ! -f "$_cache_file" ]]; then
-        mkdir -p "$_cache" 2>/dev/null || {
-            echo "bwrap_seccomp: cannot create cache dir: $_cache" >&2
-            return 1
-        }
-        chmod 700 "$_cache" 2>/dev/null || true
-        local _tmp="${_cache_file}.tmp.$$"
-        if ! "$_gen" --allowlist "$_spec" -o "$_tmp"; then
-            rm -f "$_tmp"
-            echo "bwrap_seccomp: failed to compile allowlist filter" >&2
-            return 1
-        fi
-        if ! mv -f "$_tmp" "$_cache_file"; then
-            rm -f "$_tmp"
-            echo "bwrap_seccomp: cannot store cached filter: $_cache_file" >&2
-            return 1
-        fi
-        chmod 600 "$_cache_file" 2>/dev/null || true
-    fi
-
-    _bwrap_seccomp_use "$_arrname" "$_cache_file"
-    return $?
+# Internal: run pending cleanup: D-Bus proxies, seccomp descriptors, temp files.
+_bwrap_cleanup() {
+    _bwrap_dbus_cleanup
+    _bwrap_seccomp_close_fds
+    _bwrap_seccomp_tmp_cleanup
 }
 
 # ── fcitx5 input method ──────────────────────────────────────
@@ -558,6 +565,8 @@ bwrap_ssh_agent() {
     if [[ -n "${SSH_AUTH_SOCK:-}" && -S "${SSH_AUTH_SOCK}" ]]; then
         _arr+=(--bind "${SSH_AUTH_SOCK}" "${SSH_AUTH_SOCK}"
                --setenv SSH_AUTH_SOCK "${SSH_AUTH_SOCK}")
+    else
+        _bwrap_warn "bwrap_ssh_agent: SSH_AUTH_SOCK is unset or not a socket; skipping"
     fi
 }
 
@@ -614,118 +623,6 @@ bwrap_gui_finish() {
         *) echo "bwrap_gui_finish: seccomp must be 'default' or 'none' (call bwrap_seccomp directly for an allowlist)" >&2; return 1 ;;
     esac
     bwrap_sandbox "$_v" "$_net"
-}
-
-# ══════════════════════════════════════════════════════════════
-# ── D-Bus filtered proxy ─────────────────────────────────────
-# ══════════════════════════════════════════════════════════════
-
-_BWRAP_DBUS_PROXY_PIDS=()
-_BWRAP_DBUS_PROXY_SOCKETS=()
-
-_bwrap_dbus_cleanup() {
-    local pid sock
-    for pid in "${_BWRAP_DBUS_PROXY_PIDS[@]}"; do
-        kill "$pid" 2>/dev/null || true
-        wait "$pid" 2>/dev/null || true
-    done
-    for sock in "${_BWRAP_DBUS_PROXY_SOCKETS[@]}"; do
-        rm -f "$sock"
-    done
-    _BWRAP_DBUS_PROXY_PIDS=()
-    _BWRAP_DBUS_PROXY_SOCKETS=()
-}
-
-_bwrap_cleanup() {
-    _bwrap_dbus_cleanup
-    _bwrap_seccomp_close_fds
-}
-
-# xdg-dbus-proxy rules: XDG portals
-_dbus_portal_rules() {
-    local -n _pr=$1
-    _pr+=(--talk=org.freedesktop.portal.Desktop)
-    _pr+=(--talk=org.freedesktop.portal.Documents)
-}
-
-# xdg-dbus-proxy rules: common GUI services
-_dbus_gui_service_rules() {
-    local -n _gr=$1
-    _gr+=(--talk=org.freedesktop.Notifications)
-    _gr+=(--talk=org.kde.StatusNotifierWatcher)
-    _gr+=(--talk=org.freedesktop.ScreenSaver)
-    _gr+=(--talk=org.freedesktop.login1)
-    _gr+=(--talk=org.a11y.Bus)
-}
-
-# xdg-dbus-proxy rules: fcitx5 (own bus names)
-_dbus_fcitx5_rules() {
-    local -n _fr=$1
-    _fr+=(
-        --own="org.fcitx.Fcitx5*"
-        --talk=org.freedesktop.IBus
-    )
-}
-
-# Start xdg-dbus-proxy with filter rules, bind socket into sandbox.
-# Must be paired with bwrap_exec (not raw `exec bwrap`).
-bwrap_dbus_filtered() {
-    local _arrname="$1"; shift
-    local -n _df="$_arrname"
-
-    if ! command -v xdg-dbus-proxy >/dev/null 2>&1; then
-        echo "bwrap_dbus_filtered: xdg-dbus-proxy not found (required for filtered D-Bus)" >&2
-        return 1
-    fi
-
-    local bus_addr="${DBUS_SESSION_BUS_ADDRESS:-}"
-    if [[ -z "$bus_addr" ]]; then
-        if [[ -S "${XDG_RUNTIME_DIR}/bus" ]]; then
-            bus_addr="unix:path=${XDG_RUNTIME_DIR}/bus"
-        else
-            echo "bwrap_dbus_filtered: no session bus found, skipping" >&2
-            return 0
-        fi
-    fi
-
-    local proxy_sock="${XDG_RUNTIME_DIR}/bwrap-dbus-proxy-$$-${RANDOM}.sock"
-
-    xdg-dbus-proxy "$bus_addr" "$proxy_sock" --filter "$@" &
-    local proxy_pid=$!
-    _BWRAP_DBUS_PROXY_PIDS+=("$proxy_pid")
-    _BWRAP_DBUS_PROXY_SOCKETS+=("$proxy_sock")
-
-    _bwrap_install_cleanup
-
-    local _attempts=0
-    while [[ ! -S "$proxy_sock" ]]; do
-        if ! kill -0 "$proxy_pid" 2>/dev/null; then
-            echo "bwrap_dbus_filtered: proxy exited prematurely" >&2
-            return 1
-        fi
-        if (( ++_attempts > 50 )); then
-            echo "bwrap_dbus_filtered: timeout waiting for proxy socket" >&2
-            kill "$proxy_pid" 2>/dev/null || true
-            return 1
-        fi
-        sleep 0.1
-    done
-
-    _df+=(
-        --bind "$proxy_sock" "${XDG_RUNTIME_DIR}/bus"
-        --setenv DBUS_SESSION_BUS_ADDRESS "unix:path=${XDG_RUNTIME_DIR}/bus"
-    )
-}
-
-# Filtered D-Bus for typical GUI apps (portals + common services).
-# Usage: bwrap_dbus_common ARRAYNAME [EXTRA_RULES...]
-bwrap_dbus_common() {
-    local _arrname="$1"; shift
-    local rules=()
-    _dbus_portal_rules rules
-    _dbus_gui_service_rules rules
-    rules+=("$@")
-    bwrap_dbus_filtered "$_arrname" "${rules[@]}"
 }
 
 # Run bwrap as foreground child, clean up proxies on exit.

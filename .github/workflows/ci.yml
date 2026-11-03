@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - 'bwrap-common.sh'
+      - 'bwrap-common-*.sh'
       - 'tests/**'
       - 'seccomp/**'
       - 'tools/**'
@@ -12,6 +13,7 @@ on:
   pull_request:
     paths:
       - 'bwrap-common.sh'
+      - 'bwrap-common-*.sh'
       - 'tests/**'
       - 'seccomp/**'
       - 'tools/**'
@@ -23,12 +25,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - run: shellcheck -s bash -e SC2034,SC2178,SC2317 bwrap-common.sh tests/seccomp-check.sh tests/arch-table-check.sh
+      - run: shellcheck -s bash -e SC2034,SC2178,SC2317 bwrap-common.sh bwrap-common-seccomp.sh bwrap-common-dbus.sh
+      - run: shellcheck -s bash -e SC2034,SC2178,SC2317,SC1091,SC2015,SC2030,SC2031,SC2329 tests/*.sh
 
   test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - run: sudo apt-get update && sudo apt-get install -y xdg-dbus-proxy
       - run: bash tests/test.sh
 
   s390x-shell:
@@ -42,7 +46,7 @@ jobs:
             -v "$GITHUB_WORKSPACE:/src" -w /src \
             ubuntu:24.04 bash -c '
               apt-get update >/dev/null
-              apt-get install -y --no-install-recommends build-essential libseccomp-dev make >/dev/null
+              apt-get install -y --no-install-recommends build-essential libseccomp-dev make xdg-dbus-proxy >/dev/null
               make BUILD_DIR=/tmp/bwrap-build build
               BWRAP_SECCOMP_GEN=/tmp/bwrap-build/bwrap-seccomp-gen bash tests/arch-table-check.sh
               bash tests/test.sh

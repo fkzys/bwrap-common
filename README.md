@@ -34,9 +34,11 @@ make build
 sudo make install
 ```
 
-`make install` installs the seccomp helper and the architecture-specific default
-filter built by `make build`, so `gcc` and the `libseccomp` headers are required
-before installing.
+`make build` builds only `build/bwrap-seccomp-gen`, the seccomp rule compiler.
+`make install` installs the library entry point and its two modules, the
+generator, and `seccomp/default.conf`; no BPF blob is generated or installed.
+It fails with an error if the generator has not been built yet.
+`gcc` and the `libseccomp` headers are required to build the generator.
 
 ### Uninstall
 
@@ -91,6 +93,7 @@ bwrap_themes A
 bwrap_wayland A
 bwrap_audio A
 bwrap_dbus_common A
+# bwrap_dbus_system_filtered A --call=org.freedesktop.UPower=*  # filtered system bus (optional, least privilege)
 bwrap_env_base A
 bwrap_hardened_malloc A default
 bwrap_seccomp A default
@@ -100,34 +103,53 @@ bwrap_exec "${A[@]}" -- /usr/bin/app "$@"
 
 | Variable | Default |
 |---|---|
-| `BWRAP_SECCOMP_DIR` | `/usr/lib/bwrap-common/seccomp` |
-| `BWRAP_SECCOMP_GEN` | `/usr/lib/bwrap-common/bwrap-seccomp-gen` |
+| `BWRAP_SECCOMP_CONF` | `${BWRAP_SECCOMP_DIR}/default.conf` (default blocklist source) |
+| `BWRAP_SECCOMP_DIR` | `/usr/lib/bwrap-common/seccomp` (seccomp source dir) |
+| `BWRAP_SECCOMP_GEN` | `/usr/lib/bwrap-common/bwrap-seccomp-gen` (rule compiler) |
 | `BWRAP_SECCOMP_CACHE_DIR` | `${XDG_CACHE_HOME:-$HOME/.cache}/bwrap-common/seccomp` |
-| `BWRAP_SECCOMP_ARCH` | overrides `uname -m` for the default blob (cross-arch tests) |
+| `BWRAP_SECCOMP_ARCH` | overrides `uname -m` (cross-arch tests) |
+| `BWRAP_QUIET` | unset; any non-empty value silences library warnings on stderr, including seccomp cache warnings (errors are never silenced) |
 
-The allowlist cache key is
-`sha256("bwrap-common-seccomp-v2\n<arch>\n<spec>\n")`; cached files are mode
-`0600`.
+The default filter is compiled from `seccomp/default.conf` at runtime and cached.
+Cache keys include the generator `--version` (including the loaded libseccomp version), filter mode, and architecture:
+
+- allowlist: `sha256("bwrap-common-seccomp-v4\n<genver>\nallowlist\n<arch>\n<spec>\n")`
+- default: `sha256("bwrap-common-seccomp-default-v4\n<genver>\nstrict\n<arch>\n<default_conf_sha256>\n")`
+- default+extra: `sha256("bwrap-common-seccomp-default-extra-v4\n<genver>\nstrict\n<arch>\n<default_conf_sha256>\n<extra_spec>\n")`
+
+Cached filters and their `.sha256` sidecars are mode `0600`; a checksum
+mismatch recompiles the entry. The resolved cache directory must be owned by the
+current user and must not be writable by group or others; otherwise it is
+bypassed for the runtime fallback. Symlinks are resolved with `realpath` before
+validation, but parent directories are not checked, so use a path under a
+trusted parent. If the cache is unavailable, the filter is compiled into a
+temporary file in `$XDG_RUNTIME_DIR`, opened, and unlinked; without a writable
+runtime directory the call fails closed. Extra
+blocklist rules can be merged into the default filter with
+`bwrap_seccomp A default "RULE"...`; `bwrap_gui_finish` still accepts only
+`default`/`none`.
 
 ## Files
 
 | Path | Purpose |
 |---|---|
-| `/usr/lib/bwrap-common/bwrap-common.sh` | Library |
-| `/usr/lib/bwrap-common/bwrap-seccomp-gen` | Allowlist compiler |
-| `/usr/lib/bwrap-common/seccomp/default.<arch>.bpf` | Precompiled default blocklist |
-| `seccomp/default.conf` | Default blocklist source |
+| `/usr/lib/bwrap-common/bwrap-common.sh` | Library entry point (public API); sources the internal modules below |
+| `/usr/lib/bwrap-common/bwrap-common-seccomp.sh` | seccomp internals (sourced by the entry point) |
+| `/usr/lib/bwrap-common/bwrap-common-dbus.sh` | filtered D-Bus internals (sourced by the entry point) |
+| `/usr/lib/bwrap-common/bwrap-seccomp-gen` | Runtime rule compiler |
+| `/usr/lib/bwrap-common/seccomp/default.conf` | Default blocklist source, compiled at runtime |
+| `seccomp/default.conf` | Default blocklist source in the repo |
 
 ## Dependencies
 
-- `bubblewrap` (`bwrap`)
+- `bubblewrap`
 - `bash`
-- `libseccomp` (runtime, for the seccomp helper)
-- `gcc` + `libseccomp` headers (build-time, for `make build`)
+- `libseccomp`
+- `gcc`
 - [verify-lib](https://github.com/fkzys/verify-lib) (recommended, for integrity verification before sourcing)
-- `xdg-dbus-proxy` (required for the default `filtered` D-Bus mode; optional with `dbus=none`/`unfiltered`)
+- `xdg-dbus-proxy` (required for the default `filtered` D-Bus mode)
 
-- [hardened_malloc](https://github.com/fkzys/hardened_malloc) (required by default; opt out with `malloc=no` if it is not installed)
+- [hardened_malloc](https://github.com/fkzys/hardened_malloc) (required by default; opt out with `malloc=no`)
 
 ## License
 

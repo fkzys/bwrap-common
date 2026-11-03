@@ -3,36 +3,40 @@ pkgname = bwrap-common
 
 CC ?= cc
 CFLAGS ?= -O2 -Wall -Wextra
-ARCH ?= $(shell uname -m)
 
 BUILD_DIR = build
 SECCOMP_GEN = $(BUILD_DIR)/bwrap-seccomp-gen
-SECCOMP_BPF = $(BUILD_DIR)/seccomp/default.$(ARCH).bpf
+SECCOMP_SRCS = tools/seccomp-gen.c tools/seccomp-arch.c \
+	tools/seccomp-rule.c tools/seccomp-filter.c
+SECCOMP_OBJS = $(SECCOMP_SRCS:tools/%.c=$(BUILD_DIR)/%.o)
 
 .PHONY: build install uninstall reinstall test clean
 
-build: $(SECCOMP_GEN) $(SECCOMP_BPF)
+build: $(SECCOMP_GEN)
 
-$(SECCOMP_GEN): tools/seccomp-gen.c
+$(BUILD_DIR)/%.o: tools/%.c tools/seccomp-gen.h
 	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -o $@ $< -lseccomp
+	$(CC) $(CFLAGS) -c -o $@ $<
 
-$(SECCOMP_BPF): $(SECCOMP_GEN) seccomp/default.conf
-	@mkdir -p $(dir $@)
-	$(SECCOMP_GEN) --blocklist seccomp/default.conf --arch "$(ARCH)" --strict -o $@
+$(SECCOMP_GEN): $(SECCOMP_OBJS)
+	$(CC) $(CFLAGS) -o $@ $(SECCOMP_OBJS) -lseccomp
 
 test:
 	bash tests/test.sh
 
 install:
+	@if [ ! -f $(SECCOMP_GEN) ]; then \
+		echo "error: $(SECCOMP_GEN) not found; run 'make build' first" >&2; \
+		exit 1; \
+	fi
 	install -Dm644 bwrap-common.sh $(DESTDIR)$(PREFIX)/lib/bwrap-common/bwrap-common.sh
+	install -Dm644 bwrap-common-seccomp.sh $(DESTDIR)$(PREFIX)/lib/bwrap-common/bwrap-common-seccomp.sh
+	install -Dm644 bwrap-common-dbus.sh $(DESTDIR)$(PREFIX)/lib/bwrap-common/bwrap-common-dbus.sh
 	install -Dm755 $(SECCOMP_GEN) $(DESTDIR)$(PREFIX)/lib/bwrap-common/bwrap-seccomp-gen
-	install -Dm644 $(SECCOMP_BPF) $(DESTDIR)$(PREFIX)/lib/bwrap-common/seccomp/default.$(ARCH).bpf
+	install -Dm644 seccomp/default.conf $(DESTDIR)$(PREFIX)/lib/bwrap-common/seccomp/default.conf
 	install -Dm644 LICENSE $(DESTDIR)$(PREFIX)/share/licenses/$(pkgname)/LICENSE
 
 uninstall:
-	rm -f $(DESTDIR)$(PREFIX)/lib/bwrap-common/bwrap-common.sh
-	rm -f $(DESTDIR)$(PREFIX)/lib/bwrap-common/bwrap-seccomp-gen
 	rm -rf $(DESTDIR)$(PREFIX)/lib/bwrap-common/
 	rm -rf $(DESTDIR)$(PREFIX)/share/licenses/$(pkgname)/
 
