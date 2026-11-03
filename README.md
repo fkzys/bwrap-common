@@ -146,10 +146,10 @@ blocklist rules can be merged into the default filter with
 - `bash`
 - `libseccomp`
 - `gcc`
-- [verify-lib](https://github.com/fkzys/verify-lib) (recommended, for integrity verification before sourcing)
-- `xdg-dbus-proxy` (required for the default `filtered` D-Bus mode)
+- [verify-lib](https://github.com/fkzys/verify-lib) (recommended for integrity verification before sourcing)
+- `xdg-dbus-proxy` (required for `filtered` D-Bus mode)
 
-- [hardened_malloc](https://github.com/fkzys/hardened_malloc) (required by default; opt out with `malloc=no`)
+- [hardened_malloc](https://github.com/fkzys/hardened_malloc) (required; opt out with `malloc=no`)
 
 ## License
 

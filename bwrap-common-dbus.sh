@@ -22,14 +22,14 @@ _bwrap_dbus_cleanup() {
     _BWRAP_DBUS_PROXY_SOCKETS=()
 }
 
-# xdg-dbus-proxy rules: XDG portals
+# XDG portals
 _dbus_portal_rules() {
     local -n _pr=$1
     _pr+=(--talk=org.freedesktop.portal.Desktop)
     _pr+=(--talk=org.freedesktop.portal.Documents)
 }
 
-# xdg-dbus-proxy rules: common GUI services
+# Common GUI services
 _dbus_gui_service_rules() {
     local -n _gr=$1
     _gr+=(--talk=org.freedesktop.Notifications)
@@ -38,7 +38,6 @@ _dbus_gui_service_rules() {
     _gr+=(--talk=org.a11y.Bus)
 }
 
-# xdg-dbus-proxy rules: fcitx5 (own bus names)
 _dbus_fcitx5_rules() {
     local -n _fr=$1
     _fr+=(

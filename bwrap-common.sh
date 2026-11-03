@@ -15,7 +15,7 @@ VERSION="1.0.0"
 # Set before loading modules so any top-level module code can rely on it.
 XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 
-# diagnostics; suppressed by BWRAP_QUIET.
+# Diagnostics; suppressed by BWRAP_QUIET.
 _bwrap_warn() {
     [[ -n "${BWRAP_QUIET:-}" ]] && return 0
     printf '%s\n' "$*" >&2
@@ -67,8 +67,8 @@ _bwrap_clearenv_valid() {
 }
 
 # ── Common base bwrap args ────────────────────────────────────
-# $2 = shm mode: "tmpfs" (default, private) or "bind" (host /dev/shm)
-# $3 = clear environment: "yes" (default) or "no"
+# $2 = shm mode: "tmpfs" or "bind"
+# $3 = clear environment: "yes" or "no"
 # Default clears inherited environment so only explicit --setenv entries survive.
 bwrap_base() {
     local -n _arr=$1
@@ -196,7 +196,7 @@ bwrap_audio() {
     :
 }
 
-# ── D-Bus session (unfiltered) ────────────────────────────────
+# ── unfiltered D-Bus session ────────────────────────────────
 bwrap_dbus_session() {
     local -n _arr=$1
     local _bus="${DBUS_SESSION_BUS_ADDRESS:-}"
@@ -220,7 +220,7 @@ bwrap_dbus_session() {
     fi
 }
 
-# ── D-Bus system ──────────────────────────────────────────────
+# ── system D-Bus ──────────────────────────────────────────────
 bwrap_dbus_system() {
     local -n _arr=$1
     if [[ -S /run/dbus/system_bus_socket ]]; then
@@ -234,9 +234,9 @@ bwrap_dbus_system() {
     fi
 }
 
-# ── D-Bus filtered proxy ─────────────────────────────────────
+# ── filtered D-Bus proxy ─────────────────────────────────────
 # Start a filtered session bus proxy and bind its socket into the sandbox.
-# Must be paired with bwrap_exec (not raw `exec bwrap`).
+# Must be paired with bwrap_exec.
 bwrap_dbus_filtered() {
     local _arrname="$1"; shift
     local -n _df="$_arrname"
@@ -266,7 +266,6 @@ bwrap_dbus_filtered() {
 }
 
 # Start a filtered system bus proxy and bind it at the standard system socket.
-# RULES are passed to xdg-dbus-proxy; no default rules are loaded.
 # Do not combine with bwrap_dbus_system for the same sandbox.
 bwrap_dbus_system_filtered() {
     local _arrname="$1"; shift
@@ -321,11 +320,10 @@ bwrap_dbus_common() {
 #            and cached like the other filters
 # Filters are cached under BWRAP_SECCOMP_CACHE_DIR.  If the cache is
 # unavailable the generator runs into a temporary file in XDG_RUNTIME_DIR
-# (tmpfs), which is opened and unlinked immediately; when that is unavailable
+# which is opened and unlinked immediately; when that is unavailable
 # too, the function fails closed.
 # Env vars:
-#   BWRAP_SECCOMP_CONF       default blocklist source
-#                            (${BWRAP_SECCOMP_DIR}/default.conf)
+#   BWRAP_SECCOMP_CONF       default blocklist source (${BWRAP_SECCOMP_DIR}/default.conf)
 #   BWRAP_SECCOMP_DIR        default seccomp source dir (/usr/lib/bwrap-common/seccomp)
 #   BWRAP_SECCOMP_GEN        rule compiler (/usr/lib/bwrap-common/bwrap-seccomp-gen)
 #   BWRAP_SECCOMP_CACHE_DIR  compiled filter cache (~/.cache/bwrap-common/seccomp)
@@ -347,7 +345,7 @@ bwrap_seccomp() {
     esac
 }
 
-# ── Optional read-only home paths (themes, fonts, Qt) ─────────
+# ── Optional read-only home paths ─────────
 bwrap_themes() {
     local -n _arr=$1
     local p _found=0
@@ -372,8 +370,7 @@ bwrap_themes() {
 
 # Resolve file arguments to bind mounts.
 # Usage: bwrap_resolve_files BINDS_ARRAY ARGS_ARRAY [MODE] ARG...
-# MODE is one of --ro-bind, --bind, --dev-bind or their -try variants; when
-# omitted it defaults to --ro-bind.
+# When MODE is omitted it defaults to --ro-bind.
 bwrap_resolve_files() {
     local -n _binds=$1
     local -n _args=$2
@@ -454,7 +451,7 @@ bwrap_bind_dir() {
     done
 }
 
-# Bind pre-existing dirs read-only, skip missing
+# Bind pre-existing dirs read-only
 bwrap_ro_bind_dir() {
     local -n _arr=$1
     shift
@@ -526,9 +523,9 @@ _bwrap_install_cleanup() {
         return 0
     fi
 
-    # Capture the caller's trap without slicing trap -p output.  The temporary
-    # trap() function receives the command as $2 when eval parses the builtin's
-    # output; it does not execute the caller's command.
+    # Capture the caller's trap without slicing trap -p output.
+    # The temporary trap() function receives the command as $2 when eval parses the builtin's output
+    # It does not execute the caller's command.
     _previous=$(
         trap() { printf '%s' "$2"; }
         eval "$(builtin trap -p EXIT)"
@@ -573,8 +570,8 @@ bwrap_ssh_agent() {
 # ── Standard GUI sandbox: setup phase ─────────────────────────
 # $2 = network: "yes" or "no"
 # $3 = GPU: "yes" or "no"
-# $4 = shm mode: "tmpfs" (default, private) or "bind" (host /dev/shm)
-# $5 = clear environment: "yes" (default) or "no"
+# $4 = shm mode: "tmpfs" or "bind"
+# $5 = clear environment: "yes" or "no"
 bwrap_gui_setup() {
     local _v=$1 _net="${2:-no}" _gpu="${3:-no}" _shm="${4:-tmpfs}" _clearenv="${5:-yes}"
     if ! _bwrap_shm_valid "$_shm"; then
@@ -595,10 +592,10 @@ bwrap_gui_setup() {
 }
 
 # ── Standard GUI sandbox: finish phase ────────────────────────
-# $4 = malloc: "default" (enabled), "light" (enabled), or "no" (opt-out)
-# $5 = dbus mode: "filtered" (default), "unfiltered", or "none"
+# $4 = malloc: "default", "light", or "no"
+# $5 = dbus mode: "filtered", "unfiltered", or "none"
 # $6 = themes: "yes" or "no"
-# $7 = seccomp: "default" or "none" (allowlists go through bwrap_seccomp)
+# $7 = seccomp: "default" or "none"
 bwrap_gui_finish() {
     local _v=$1 _display="${2:-wayland}" _net="${3:-no}" _malloc="${4:-default}" _dbus="${5:-filtered}" _themes="${6:-yes}" _seccomp="${7:-default}"
     [[ "$_themes" == "yes" ]] && bwrap_themes "$_v"
@@ -626,7 +623,6 @@ bwrap_gui_finish() {
 }
 
 # Run bwrap as foreground child, clean up proxies on exit.
-# Use instead of `exec bwrap` when using bwrap_dbus_filtered.
 bwrap_exec() {
     if [[ ${#_BWRAP_DBUS_PROXY_PIDS[@]} -eq 0 ]]; then
         exec bwrap "$@"
