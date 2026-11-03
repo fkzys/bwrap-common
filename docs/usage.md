@@ -116,8 +116,8 @@ loads no default rules.
 A bare `--call=NAME` is rejected by the proxy. Examples:
 
 ```sh
---call=org.freedesktop.UPower=*
---call=org.freedesktop.UPower=org.freedesktop.UPower.*@/org/freedesktop/UPower/*
+bwrap_dbus_system_filtered A --call=org.freedesktop.UPower=*
+bwrap_dbus_system_filtered A --call=org.freedesktop.UPower=org.freedesktop.UPower.*@/org/freedesktop/UPower/*
 ```
 
 It binds the proxy at the standard system socket and sets
