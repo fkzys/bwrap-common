@@ -85,7 +85,7 @@ _bwrap_seccomp_tmp_cleanup() {
     _BWRAP_SECCOMP_TMP_FILES=()
 }
 
-# Reject arrays that already contain a seccomp filter.
+# Reject arrays containing a seccomp filter.
 _bwrap_seccomp_reject_existing() {
     local -n _arr=$1
     local _arg
@@ -142,8 +142,8 @@ _bwrap_seccomp_open_fd() {
     return 0
 }
 
-# Validate FILE, open it and append --seccomp FD to ARRAYNAME.  When
-# TEMP is 1 the file is unlinked immediately after it is opened.
+# Validate FILE, open it and append --seccomp FD to ARRAYNAME.
+# When TEMP is 1 the file is unlinked immediately after it is opened.
 _bwrap_seccomp_use() {
     local _arrname="$1" _file="$2" _temp="${3:-0}"
     local -n _arr="$_arrname"
@@ -164,7 +164,7 @@ _bwrap_seccomp_use() {
     return 0
 }
 
-# Path to the default blocklist source.
+# Default blocklist source.
 _bwrap_seccomp_conf() {
     printf '%s' "${BWRAP_SECCOMP_CONF:-${BWRAP_SECCOMP_DIR:-/usr/lib/bwrap-common/seccomp}/default.conf}"
 }
@@ -301,7 +301,7 @@ _bwrap_seccomp_compile() {
     esac
 }
 
-# Compile KIND into a temporary file in XDG_RUNTIME_DIR (tmpfs).
+# Compile KIND into a temporary file in XDG_RUNTIME_DIR.
 _bwrap_seccomp_runtime_prepare() {
     local _kind="$1" _payload="$2"
     local -n _run_path="$3"
