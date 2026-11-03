@@ -61,6 +61,10 @@ provided rules, waits for the proxy socket, and binds it into the sandbox as
 Use `bwrap_exec`, not `exec bwrap`, with filtered D-Bus: `exec bwrap` bypasses
 the cleanup.
 
+The library installs its own `EXIT` trap for proxy and seccomp-fd cleanup. If the
+caller already has an `EXIT` trap, it is preserved: cleanup runs first, then the
+original trap, and the shell exit status is preserved.
+
 Filtered D-Bus is the default for `bwrap_gui_finish`. If `xdg-dbus-proxy` is not
 installed, `bwrap_dbus_filtered` and `bwrap_dbus_common` return non-zero and do
 not fall back to an unfiltered bus; `bwrap_gui_finish` propagates that failure.
