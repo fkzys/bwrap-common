@@ -74,7 +74,7 @@ Extra `--talk`/`--own` rules can be appended per-app:
 
 ```sh
 bwrap_dbus_common A \
-    --own==some.app.client \
+    --own=some.app.client \
     --talk=org.freedesktop.secrets \
     --talk=org.kde.kwalletd5 \
     --talk=org.kde.kwalletd6

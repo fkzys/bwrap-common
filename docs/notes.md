@@ -100,13 +100,14 @@ Cache keys include the generator `--version` (including the loaded libseccomp ve
 - default: `sha256("bwrap-common-seccomp-default-v4\n<genver>\nstrict\n<arch>\n<default_conf_sha256>\n")`
 - default+extra: `sha256("bwrap-common-seccomp-default-extra-v4\n<genver>\nstrict\n<arch>\n<default_conf_sha256>\n<extra_spec>\n")`
 
-Cached filters and their `.sha256` sidecars are mode `0600`; a checksum
-mismatch recompiles the entry. The resolved cache directory must be owned by the
-current user and must not be writable by group or others; otherwise it is bypassed for the runtime fallback. Symlinks are resolved with `realpath` before validation,
-but parent directories are not checked, so use a path under a trusted parent.
+Cached filters and their `.sha256` sidecars are mode `0600`; a checksum mismatch recompiles the entry.
+The resolved cache directory must be owned by the current user
+and must not be writable by group or others; otherwise it is bypassed for the runtime fallback.
+Symlinks are resolved with `realpath` before validation, but parent directories are not
+checked, so use a path under a trusted parent.
 
-If the cache is unavailable, the filter is compiled into a
-temporary file in `$XDG_RUNTIME_DIR`, opened, and unlinked; without a writable runtime directory the call fails closed.
+If the cache is unavailable, the filter is compiled into a temporary file in
+`$XDG_RUNTIME_DIR`, opened, and unlinked; without a writable runtime directory the call fails closed.
 Extra blocklist rules can be merged into the default filter with
 `bwrap_seccomp A default "RULE"...`; `bwrap_gui_finish` still accepts only
 `default`/`none`.

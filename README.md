@@ -21,7 +21,7 @@ takes an array variable name and appends bwrap arguments to it via nameref.
 - **[notes](docs/notes.md)**
     - [Wrappers](docs/notes.md#wrappers)
         - [Environment](docs/notes.md#environment)
-        - [hardened_malloc](docs/notes.md#hardened-malloc)
+        - [hardened_malloc](docs/notes.md#hardened_malloc)
         - [Missing resources](docs/notes.md#missing-resources)
         - [D-Bus filtering](docs/notes.md#d-bus-filtering)
     - [Seccomp](docs/notes.md#seccomp)
