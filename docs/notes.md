@@ -112,6 +112,7 @@ checked, so use a path under a trusted parent.
 
 If the cache is unavailable, the filter is compiled into a temporary file in
 `$XDG_RUNTIME_DIR`, opened, and unlinked; without a writable runtime directory the call fails closed.
+
 Extra blocklist rules can be merged into the default filter with
 `bwrap_seccomp A default "RULE"...`; `bwrap_gui_finish` still accepts only
 `default`/`none`.
