@@ -188,7 +188,7 @@ if [[ -f /usr/lib/libhardened_malloc.so.empty ]]; then
     has_triple G "--ro-bind" "/usr/lib/libhardened_malloc.so.empty" "/usr/lib/libhardened_malloc.so" \
         && ok "stub bind (default variant) present" || fail "stub bind (default variant) missing"
 else
-    ok "stub binds skipped (libhardened_malloc.so.empty not installed)"
+    skip "stub binds (libhardened_malloc.so.empty not installed)"
 fi
 
 # ── bwrap_runtime_dir ───────────────────────────────────────
@@ -260,6 +260,52 @@ O=()
 bwrap_fcitx O
 has_pair O "--setenv" "QT_IM_MODULE" && ok "sets QT_IM_MODULE" || fail "QT_IM_MODULE missing"
 has_pair O "--setenv" "XMODIFIERS"   && ok "sets XMODIFIERS"   || fail "XMODIFIERS missing"
+_bwrap_fcitx_close_fds
+
+# fcitx5 scans world-writable /tmp.  A caller-owned real directory is bound via
+# --bind-fd; a planted symlink or foreign-owned entry fails the helper; a plain
+# file is not an fcitx object and is ignored.
+FCTX="/tmp/fcitx5-bwrap-test-$$-${RANDOM}"
+
+mkdir -p "${FCTX}-dir"
+FC=()
+bwrap_fcitx FC && FCTX_RC=0 || FCTX_RC=$?
+if [[ $FCTX_RC -eq 0 ]] && has_arg FC "${FCTX}-dir" && has_arg FC --bind-fd; then
+    ok "fcitx binds a caller-owned directory via --bind-fd"
+else
+    fail "fcitx did not bind a caller-owned directory (rc=$FCTX_RC)"
+fi
+_bwrap_fcitx_close_fds
+rm -rf "${FCTX}-dir"
+
+: > "${FCTX}-file"
+FC=()
+bwrap_fcitx FC 2>/dev/null && FCTX_RC=0 || FCTX_RC=$?
+if [[ $FCTX_RC -eq 0 ]] && ! has_arg FC "${FCTX}-file"; then
+    ok "fcitx ignores a plain file"
+else
+    fail "fcitx mishandled a plain file (rc=$FCTX_RC)"
+fi
+_bwrap_fcitx_close_fds
+rm -f "${FCTX}-file"
+
+ln -sfn /etc "${FCTX}-link-dir"
+FC=()
+bwrap_fcitx FC 2>/dev/null && FCTX_RC=0 || FCTX_RC=$?
+[[ $FCTX_RC -ne 0 ]] && ok "fcitx hard-fails on a planted symlink" || fail "fcitx accepted a planted symlink"
+_bwrap_fcitx_close_fds
+rm -f "${FCTX}-link-dir"
+
+mkdir -p "${FCTX}-foreign"
+if chown 65534:65534 "${FCTX}-foreign" 2>/dev/null; then
+    FC=()
+    bwrap_fcitx FC 2>/dev/null && FCTX_RC=0 || FCTX_RC=$?
+    [[ $FCTX_RC -ne 0 ]] && ok "fcitx hard-fails on a foreign-owned entry" || fail "fcitx accepted a foreign-owned entry"
+else
+    skip "fcitx foreign-owner case (requires root)"
+fi
+_bwrap_fcitx_close_fds
+rm -rf "${FCTX}-foreign"
 
 
 # ── bwrap_ssh_agent ─────────────────────────────────────────
@@ -355,6 +401,49 @@ if [[ ! -s "$WARN_ERR" && ${#RFA3[@]} -eq 2 ]]; then
     ok "resolve_files stays silent for non-path slash arguments"
 else
     fail "resolve_files warned on non-path arguments"
+fi
+
+# A path whose parent is the filesystem root must never resolve to "/".
+RFR=(); RFRA=()
+bwrap_resolve_files RFR RFRA --bind / 2>/dev/null
+has_triple RFR --bind / / \
+    && fail "resolve_files bound the root for /" || ok "resolve_files refuses / (bind mode)"
+
+RFRD=(); RFRDA=()
+bwrap_resolve_files RFRD RFRDA / 2>/dev/null
+has_triple RFRD --ro-bind / / \
+    && fail "resolve_files bound the root for / (default mode)" || ok "resolve_files refuses / (default mode)"
+
+ln -sfn / "${TMPDIR_TEST}/rootlink"
+RFR2=(); RFRA2=()
+bwrap_resolve_files RFR2 RFRA2 --bind "${TMPDIR_TEST}/rootlink" 2>/dev/null
+has_triple RFR2 --bind / / \
+    && fail "resolve_files bound the root for a symlink to /" || ok "resolve_files refuses a symlink to /"
+
+for ROOTPATH in /home /mnt /opt /var /srv; do
+    [[ -e "$ROOTPATH" ]] || continue
+    for LAYOUT in leaf parent; do
+        RFR3=(); RFRA3=()
+        bwrap_resolve_files RFR3 RFRA3 "$LAYOUT" --bind "$ROOTPATH" 2>/dev/null
+        has_triple RFR3 --bind / / \
+            && fail "resolve_files ($LAYOUT) bound the root for $ROOTPATH" || ok "resolve_files ($LAYOUT) refuses depth-1 path $ROOTPATH"
+    done
+done
+
+F2DIR="${HOME}/.bwrap-common-test-$$"
+if mkdir -p "$F2DIR" 2>/dev/null; then
+    : > "${F2DIR}/arg.bin"
+    RFL=(); RFLA=()
+    bwrap_resolve_files RFL RFLA "${F2DIR}/arg.bin" 2>/dev/null
+    has_triple RFL --ro-bind "${F2DIR}/arg.bin" "${F2DIR}/arg.bin" \
+        && ok "resolve_files (leaf default) binds the argument itself" || fail "resolve_files (leaf default) did not bind the argument"
+    RFP=(); RFPA=()
+    bwrap_resolve_files RFP RFPA parent "${F2DIR}/arg.bin" 2>/dev/null
+    has_triple RFP --ro-bind "$F2DIR" "$F2DIR" \
+        && ok "resolve_files (parent mode) binds the containing directory" || fail "resolve_files (parent mode) did not bind the directory"
+    rm -rf "$F2DIR"
+else
+    skip "resolve_files layout cases (HOME not writable)"
 fi
 
 QW=()

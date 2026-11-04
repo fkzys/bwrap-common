@@ -110,6 +110,13 @@ and must not be writable by group or others; otherwise it is bypassed for the ru
 Symlinks are resolved with `realpath` before validation, but parent directories are not
 checked, so use a path under a trusted parent.
 
+The checksum beside a cached filter detects corruption, not tampering: it is stored in
+the same directory as the filter, so it cannot distinguish a filter written by a
+compromised sandbox from the original. The default GUI sandbox does not expose the
+cache (`bwrap_home_tmpfs` gives it a private `$HOME`), but a sandbox granted write
+access to `BWRAP_SECCOMP_CACHE_DIR` (or a parent such as `$HOME/.cache`) can forge the
+next launch's filter. Never bind the seccomp cache into a sandbox with write access.
+
 If the cache is unavailable, the filter is compiled into a temporary file in
 `$XDG_RUNTIME_DIR`, opened, and unlinked; without a writable runtime directory the call fails closed.
 

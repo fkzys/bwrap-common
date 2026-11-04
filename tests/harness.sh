@@ -7,7 +7,9 @@ set -uo pipefail
 
 PASS=0
 FAIL=0
+SKIP=0
 TESTS=0
+SKIPPED_MESSAGES=()
 
 ok() {
     PASS=$((PASS + 1))
@@ -23,6 +25,14 @@ fail() {
     return 0
 }
 
+skip() {
+    SKIP=$((SKIP + 1))
+    TESTS=$((TESTS + 1))
+    SKIPPED_MESSAGES+=("$1")
+    echo "  ⊘ $1"
+    return 0
+}
+
 section() {
     echo ""
     echo "── $1 ──"
@@ -30,9 +40,17 @@ section() {
 
 summary() {
     local name="${0##*/}"
+    local line
     echo ""
+    if (( SKIP > 0 )); then
+        echo " skipped:"
+        for line in "${SKIPPED_MESSAGES[@]}"; do
+            echo "  ⊘ $line"
+        done
+        echo ""
+    fi
     echo "════════════════════════════════════"
-    echo " ${name}: ${PASS} passed, ${FAIL} failed (total: ${TESTS})"
+    echo " ${name}: ${PASS} passed, ${FAIL} failed, ${SKIP} skipped (total: ${TESTS})"
     echo "════════════════════════════════════"
     [[ $FAIL -eq 0 ]]
 }

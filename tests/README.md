@@ -36,10 +36,10 @@ bash tests/test.sh
 
 The test script provides a minimal assertion framework and array inspection helpers:
 
-- **Assertion functions**: `ok`/`fail` — both always exit 0, so `cond && ok "..." || fail "..."` stays unambiguous even if writing the message to stdout fails
+- **Assertion functions**: `ok`/`fail`/`skip` — all always exit 0, so `cond && ok "..." || fail "..."` stays unambiguous even if writing the message to stdout fails; `skip` records a test that did not run because a host prerequisite was unavailable (missing stub library, not running as root, a non-symlink `resolv.conf`, an unknown host arch), so skipped coverage is never mistaken for passed coverage
 - **Array helpers**: `has_arg` (flag present), `has_pair` (consecutive flag + value), `has_triple` (three consecutive values), `count_flag` (count occurrences of a flag), `arrays_equal` (exact element-wise comparison of two arrays)
 - **Section headers**: `section` for grouping related tests
-- **Summary**: final pass/fail counts; exits non-zero if any test failed
+- **Summary**: final pass/fail/skip counts, with every skipped test listed under `skipped:` at the end (same place failures surface); exits non-zero only if any test failed
 
 ### Source and setup
 
@@ -68,15 +68,18 @@ Each function is called with a fresh empty array, then the array contents are in
 - **`bwrap_bind_dir`**: verifies directory creation on the host filesystem and `--bind` flag generation; tests multiple directories in a single call
 - **`bwrap_ro_bind_dir`**: verifies `--ro-bind` for existing directories and empty output for nonexistent paths
 - **`require_dir`**: verifies success for `/tmp` and failure (in a subshell) for a nonexistent path
-- **`bwrap_fcitx`**: verifies `--setenv QT_IM_MODULE` and `--setenv XMODIFIERS` for input method support
+- **`bwrap_fcitx`**: verifies `--setenv QT_IM_MODULE` and `--setenv XMODIFIERS` for input method support, and that the `/tmp/fcitx5-*` scan binds a caller-owned real directory via `--bind-fd`, hard-fails on a planted symlink or foreign-owned entry, and ignores a plain file
 - **`bwrap_ssh_agent`**: verifies empty output when `SSH_AUTH_SOCK` is unset
 - **unavailable-resource warnings**: `bwrap_ro_bind_dir`, `bwrap_ssh_agent`,
   `bwrap_themes`, `bwrap_audio`, `bwrap_wayland`, `bwrap_x11`, `bwrap_gpu`,
   `bwrap_resolv`, and `bwrap_resolve_files` print a warning to stderr (and
   append nothing) when the resource they were asked for is missing, so a
   skipped optional resource is no longer silent. `bwrap_resolve_files` is
-  checked with both an explicit and an omitted (`default`) mode, and stays
-  silent for non-path slash arguments (`user/repo`, URLs). `BWRAP_QUIET=1`
+  checked with both an explicit and an omitted bind mode, stays silent for
+  non-path slash arguments (`user/repo`, URLs), refuses `/`, a depth-1 path, or a
+  symlink resolving to `/` instead of emitting `--bind / /`, and covers both
+  layouts: `leaf` (default) binds the argument itself while `parent` binds its
+  containing directory. `BWRAP_QUIET=1`
   silences the warning. The `gpu` case runs only when `/dev/dri` is absent and
   no `/dev/nvidia*` exists; the X11-socket case runs only when
   `/tmp/.X11-unix` is absent
@@ -105,8 +108,8 @@ shell-side logic without loading a real filter into the kernel:
 - changing the generator `--version` changes the cache key and forces a rebuild
 - four concurrent cache writers all succeed and leave one valid checksummed entry
 - pre-planted cache entries in `0777` and `0770` directories are rejected and
-  bypassed for the runtime fallback; a foreign-owner case runs when `chown` is
-  available
+  bypassed for the runtime fallback; a foreign-owner case runs only as root
+  (a non-root `chown` to another owner fails)
 - default+extra appends one `--seccomp` (never `--add-seccomp-fd`), passes the
   user rules through `--extra -`, compiles once, reuses the cache, and closes
   the descriptor on cleanup
