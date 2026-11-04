@@ -19,13 +19,13 @@
 | `bwrap_dbus_filtered` | Filtered D-Bus via `xdg-dbus-proxy` with custom rules; fails if the proxy is unavailable and a session bus exists (with no bus it is skipped) |
 | `bwrap_dbus_common` | Pre-configured filtered D-Bus for session desktop apps (XDG portals, notifications, status notifier, screen saver, a11y); accepts extra rules |
 | `bwrap_themes` | GTK2/3, dconf, fontconfig, Qt, Kvantum, fonts, icons |
-| `bwrap_fcitx` | fcitx5 input method sockets + env; a `/tmp/fcitx5-*` entry that is a symlink or foreign-owned fails the helper, while a caller-owned real directory is bound via `--bind-fd` |
+| `bwrap_fcitx` | fcitx5 input method socket + env; binds only the caller's own socket directory (`$XDG_RUNTIME_DIR/fcitx5` or `/tmp/fcitx5-<euid>`), hard-failing on a symlinked or foreign-owned one |
 | `bwrap_home_tmpfs` | tmpfs `$HOME` with XDG skeleton |
 | `bwrap_runtime_dir` | XDG_RUNTIME_DIR with correct permissions |
 | `bwrap_env_base` | `HOME`, `LANG`, `PATH`, `TERM`, `XDG_RUNTIME_DIR`, `XDG_CACHE_HOME=$HOME/.cache` |
 | `bwrap_sandbox` | `--unshare-all`, optional `--share-net` / `--new-session` |
 | `bwrap_seccomp` | Compile `seccomp/default.conf` (optionally merged with extra rules) or a syscall allowlist at runtime, then add one `--seccomp` descriptor |
-| `bwrap_resolve_files` | Resolve file arguments to bind mounts; layout `leaf` (default: mount each argument itself) or `parent` (mount its containing directory); the filesystem root is always refused |
+| `bwrap_resolve_files` | Resolve file arguments to bind mounts; `--layout=leaf` (default: mount each argument itself) or `--layout=parent` (mount its containing directory); `--` ends option parsing; the filesystem root is always refused |
 | `bwrap_bind_dir` | Create state dirs on host + add `--bind` |
 | `bwrap_ro_bind_dir` | Bind pre-existing dirs read-only, skip missing |
 | `bwrap_ssh_agent` | SSH agent socket forwarding |

@@ -379,15 +379,31 @@ bwrap_resolve_files() {
     shift 2
     local _mode="--ro-bind"
     local _layout="leaf"
-    while :; do
-        case "${1:-}" in
+    while (( $# > 0 )); do
+        case "$1" in
+            --)
+                shift; break ;;
+            --layout=*)
+                _layout=${1#--layout=}; shift ;;
+            --layout)
+                shift
+                _layout=${1:-}
+                if [[ -z "$_layout" ]]; then
+                    echo "bwrap_resolve_files: --layout needs leaf or parent" >&2
+                    return 2
+                fi
+                shift ;;
             --ro-bind|--bind|--dev-bind|--ro-bind-try|--bind-try|--dev-bind-try)
                 _mode=$1; shift ;;
-            leaf|parent)
-                _layout=$1; shift ;;
             *) break ;;
         esac
     done
+    case "$_layout" in
+        leaf|parent) ;;
+        *)
+            echo "bwrap_resolve_files: unknown layout: $_layout" >&2
+            return 2 ;;
+    esac
     local arg
     for arg in "$@"; do
         if [[ "$arg" == -* ]]; then
@@ -403,7 +419,7 @@ bwrap_resolve_files() {
                         # it would expose the whole host root, so refuse it.
                         _bwrap_warn "bwrap_resolve_files: refusing to bind the filesystem root for: $arg"
                         ;;
-                    /usr/*|/etc/*|/proc/*|/dev/*|/tmp*|/sys/*) ;;
+                    /usr|/usr/*|/etc|/etc/*|/proc|/proc/*|/dev|/dev/*|/tmp|/tmp/*|/sys|/sys/*) ;;
                     "${HOME}")
                         _binds+=("$_mode" "$_real" "$_real")
                         ;;
@@ -414,7 +430,7 @@ bwrap_resolve_files() {
                     /)
                         _bwrap_warn "bwrap_resolve_files: refusing to bind the filesystem root for: $arg"
                         ;;
-                    /usr/*|/etc/*|/proc/*|/dev/*|/tmp*|/sys/*) ;;
+                    /usr|/usr/*|/etc|/etc/*|/proc|/proc/*|/dev|/dev/*|/tmp|/tmp/*|/sys|/sys/*) ;;
                     *) _binds+=("$_mode" "$_real" "$_real") ;;
                 esac
             fi
@@ -565,6 +581,17 @@ _bwrap_cleanup() {
 # ── fcitx5 input method ──────────────────────────────────────
 _BWRAP_FCITX_FDS=()
 
+# fcitx5 keeps its socket directory under the caller's own name: /tmp/fcitx5-<euid>
+# when XDG_RUNTIME_DIR is unset, or $XDG_RUNTIME_DIR/fcitx5 otherwise.  These exact
+# paths are used instead of a /tmp/fcitx5-* glob so another user's entry is never
+# even considered.
+_bwrap_fcitx_paths() {
+    printf '%s\n' "/tmp/fcitx5-${EUID}"
+    if [[ -n "${XDG_RUNTIME_DIR:-}" ]]; then
+        printf '%s\n' "${XDG_RUNTIME_DIR}/fcitx5"
+    fi
+}
+
 _bwrap_fcitx_close_fds() {
     local _fd
     if (( ${#_BWRAP_FCITX_FDS[@]} == 0 )); then
@@ -578,32 +605,28 @@ _bwrap_fcitx_close_fds() {
 
 bwrap_fcitx() {
     local -n _arr=$1
-    _arr+=(
+    local -a _out=()
+    _out+=(
         --setenv QT_IM_MODULE fcitx
         --setenv XMODIFIERS "@im=fcitx"
     )
     [[ -d "${HOME}/.config/fcitx5" ]] && \
-        _arr+=(--ro-bind "${HOME}/.config/fcitx5" "${HOME}/.config/fcitx5")
+        _out+=(--ro-bind "${HOME}/.config/fcitx5" "${HOME}/.config/fcitx5")
     local sock _fd
-    local -a _fcitx_paths=()
-    # fcitx5 keeps its socket directory in world-writable /tmp.  Only a real
-    # socket or directory that is not a symlink and is owned by the caller is
-    # accepted; anything else fails the helper rather than degrading silently.
-    # Validation runs before any descriptor is opened, so a refusal leaves no
-    # half-built argument list behind.
-    for sock in /tmp/fcitx5-*; do
+    local -a _candidates=() _trusted=()
+    mapfile -t _candidates < <(_bwrap_fcitx_paths)
+    # Validate every candidate before opening anything, so a refusal leaves
+    # _arr untouched; a directory is then bound through --bind-fd so its inode
+    # cannot be swapped, and a socket (unopenable from the shell) by path.
+    for sock in "${_candidates[@]}"; do
         [[ -S "$sock" || -d "$sock" ]] || continue
         if [[ -L "$sock" || ! -O "$sock" ]]; then
             echo "bwrap_fcitx: refusing untrusted path: $sock" >&2
             return 1
         fi
-        _fcitx_paths+=("$sock")
+        _trusted+=("$sock")
     done
-    # Directories are bound through --bind-fd so the mounted inode cannot be
-    # swapped after this check; a bwrap without --bind-fd rejects the option
-    # and fails the launch.  Sockets cannot be opened by the shell, so they
-    # are bound by path (safe under the sticky /tmp just checked).
-    for sock in "${_fcitx_paths[@]}"; do
+    for sock in "${_trusted[@]}"; do
         if [[ -d "$sock" ]]; then
             unset -v _fd
             if ! exec {_fd}< "$sock"; then
@@ -611,11 +634,12 @@ bwrap_fcitx() {
                 return 1
             fi
             _BWRAP_FCITX_FDS+=("$_fd")
-            _arr+=(--bind-fd "$_fd" "$sock")
+            _out+=(--bind-fd "$_fd" "$sock")
         else
-            _arr+=(--bind "$sock" "$sock")
+            _out+=(--bind "$sock" "$sock")
         fi
     done
+    _arr+=("${_out[@]}")
     :
 }
 

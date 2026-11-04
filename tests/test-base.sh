@@ -262,50 +262,52 @@ has_pair O "--setenv" "QT_IM_MODULE" && ok "sets QT_IM_MODULE" || fail "QT_IM_MO
 has_pair O "--setenv" "XMODIFIERS"   && ok "sets XMODIFIERS"   || fail "XMODIFIERS missing"
 _bwrap_fcitx_close_fds
 
-# fcitx5 scans world-writable /tmp.  A caller-owned real directory is bound via
-# --bind-fd; a planted symlink or foreign-owned entry fails the helper; a plain
-# file is not an fcitx object and is ignored.
-FCTX="/tmp/fcitx5-bwrap-test-$$-${RANDOM}"
+mapfile -t FCTX_PATHS < <(_bwrap_fcitx_paths)
+has_arg FCTX_PATHS "/tmp/fcitx5-${EUID}" \
+    && ok "targets /tmp/fcitx5-<euid>" || fail "missing /tmp/fcitx5-<euid> candidate"
+has_arg FCTX_PATHS "${XDG_RUNTIME_DIR}/fcitx5" \
+    && ok "targets \$XDG_RUNTIME_DIR/fcitx5" || fail "missing \$XDG_RUNTIME_DIR/fcitx5 candidate"
 
-mkdir -p "${FCTX}-dir"
+FCTX_RT="${TMPDIR_TEST}/fcitx-rt"
+mkdir -p "${FCTX_RT}/fcitx5"
 FC=()
-bwrap_fcitx FC && FCTX_RC=0 || FCTX_RC=$?
-if [[ $FCTX_RC -eq 0 ]] && has_arg FC "${FCTX}-dir" && has_arg FC --bind-fd; then
-    ok "fcitx binds a caller-owned directory via --bind-fd"
+XDG_RUNTIME_DIR="$FCTX_RT" bwrap_fcitx FC && FCTX_RC=0 || FCTX_RC=$?
+if [[ $FCTX_RC -eq 0 ]] && has_arg FC "${FCTX_RT}/fcitx5" && has_arg FC --bind-fd; then
+    ok "binds a caller-owned fcitx directory via --bind-fd"
 else
-    fail "fcitx did not bind a caller-owned directory (rc=$FCTX_RC)"
+    fail "did not bind the fcitx directory (rc=$FCTX_RC)"
 fi
 _bwrap_fcitx_close_fds
-rm -rf "${FCTX}-dir"
+rmdir "${FCTX_RT}/fcitx5"
 
-: > "${FCTX}-file"
+: > "${FCTX_RT}/fcitx5"
 FC=()
-bwrap_fcitx FC 2>/dev/null && FCTX_RC=0 || FCTX_RC=$?
-if [[ $FCTX_RC -eq 0 ]] && ! has_arg FC "${FCTX}-file"; then
-    ok "fcitx ignores a plain file"
+XDG_RUNTIME_DIR="$FCTX_RT" bwrap_fcitx FC 2>/dev/null && FCTX_RC=0 || FCTX_RC=$?
+if [[ $FCTX_RC -eq 0 ]] && ! has_arg FC "${FCTX_RT}/fcitx5"; then
+    ok "ignores a plain file at the fcitx path"
 else
-    fail "fcitx mishandled a plain file (rc=$FCTX_RC)"
+    fail "mishandled a plain file (rc=$FCTX_RC)"
 fi
 _bwrap_fcitx_close_fds
-rm -f "${FCTX}-file"
+rm -f "${FCTX_RT}/fcitx5"
 
-ln -sfn /etc "${FCTX}-link-dir"
+ln -sfn /etc "${FCTX_RT}/fcitx5"
 FC=()
-bwrap_fcitx FC 2>/dev/null && FCTX_RC=0 || FCTX_RC=$?
-[[ $FCTX_RC -ne 0 ]] && ok "fcitx hard-fails on a planted symlink" || fail "fcitx accepted a planted symlink"
+XDG_RUNTIME_DIR="$FCTX_RT" bwrap_fcitx FC 2>/dev/null && FCTX_RC=0 || FCTX_RC=$?
+[[ $FCTX_RC -ne 0 ]] && ok "hard-fails on a symlinked fcitx path" || fail "accepted a symlinked fcitx path"
 _bwrap_fcitx_close_fds
-rm -f "${FCTX}-link-dir"
+rm -f "${FCTX_RT}/fcitx5"
 
-mkdir -p "${FCTX}-foreign"
-if chown 65534:65534 "${FCTX}-foreign" 2>/dev/null; then
+mkdir -p "${FCTX_RT}/fcitx5"
+if chown 65534:65534 "${FCTX_RT}/fcitx5" 2>/dev/null; then
     FC=()
-    bwrap_fcitx FC 2>/dev/null && FCTX_RC=0 || FCTX_RC=$?
-    [[ $FCTX_RC -ne 0 ]] && ok "fcitx hard-fails on a foreign-owned entry" || fail "fcitx accepted a foreign-owned entry"
+    XDG_RUNTIME_DIR="$FCTX_RT" bwrap_fcitx FC 2>/dev/null && FCTX_RC=0 || FCTX_RC=$?
+    [[ $FCTX_RC -ne 0 ]] && ok "hard-fails on a foreign-owned fcitx path" || fail "accepted a foreign-owned fcitx path"
 else
     skip "fcitx foreign-owner case (requires root)"
 fi
 _bwrap_fcitx_close_fds
-rm -rf "${FCTX}-foreign"
+rm -rf "${FCTX_RT}"
 
 
 # ── bwrap_ssh_agent ─────────────────────────────────────────
@@ -424,7 +426,7 @@ for ROOTPATH in /home /mnt /opt /var /srv; do
     [[ -e "$ROOTPATH" ]] || continue
     for LAYOUT in leaf parent; do
         RFR3=(); RFRA3=()
-        bwrap_resolve_files RFR3 RFRA3 "$LAYOUT" --bind "$ROOTPATH" 2>/dev/null
+        bwrap_resolve_files RFR3 RFRA3 "--layout=$LAYOUT" --bind "$ROOTPATH" 2>/dev/null
         has_triple RFR3 --bind / / \
             && fail "resolve_files ($LAYOUT) bound the root for $ROOTPATH" || ok "resolve_files ($LAYOUT) refuses depth-1 path $ROOTPATH"
     done
@@ -438,13 +440,31 @@ if mkdir -p "$F2DIR" 2>/dev/null; then
     has_triple RFL --ro-bind "${F2DIR}/arg.bin" "${F2DIR}/arg.bin" \
         && ok "resolve_files (leaf default) binds the argument itself" || fail "resolve_files (leaf default) did not bind the argument"
     RFP=(); RFPA=()
-    bwrap_resolve_files RFP RFPA parent "${F2DIR}/arg.bin" 2>/dev/null
+    bwrap_resolve_files RFP RFPA --layout=parent "${F2DIR}/arg.bin" 2>/dev/null
     has_triple RFP --ro-bind "$F2DIR" "$F2DIR" \
         && ok "resolve_files (parent mode) binds the containing directory" || fail "resolve_files (parent mode) did not bind the directory"
     rm -rf "$F2DIR"
 else
     skip "resolve_files layout cases (HOME not writable)"
 fi
+
+BARG=(); BARGA=()
+bwrap_resolve_files BARG BARGA -- --bind
+[[ ${#BARGA[@]} -eq 1 && "${BARGA[0]}" == "--bind" ]] \
+    && ok "resolve_files: -- ends option parsing" || fail "resolve_files: -- did not stop parsing"
+
+LARG=(); LARGA=()
+bwrap_resolve_files LARG LARGA --bind leaf
+[[ ${#LARGA[@]} -eq 1 && "${LARGA[0]}" == "leaf" ]] \
+    && ok "resolve_files: bare 'leaf' is an argument, not a layout" || fail "resolve_files: bare 'leaf' was consumed"
+
+XARG=(); XARGA=()
+bwrap_resolve_files XARG XARGA --layout=bogus /tmp 2>/dev/null && XRC=0 || XRC=$?
+[[ $XRC -ne 0 ]] && ok "resolve_files: rejects an unknown layout" || fail "resolve_files: accepted an unknown layout"
+
+NARG=(); NARGA=()
+bwrap_resolve_files NARG NARGA --layout=parent --bind "${TMPDIR_TEST}/missing-app" 2>/dev/null
+[[ ${#NARGA[@]} -eq 1 ]] && ok "resolve_files: --layout=parent is accepted" || fail "resolve_files: --layout=parent rejected"
 
 QW=()
 BWRAP_QUIET=1 bwrap_ro_bind_dir QW "${TMPDIR_TEST}/missing-ro-dir" 2>"$WARN_ERR"
