@@ -25,7 +25,7 @@
 | `bwrap_env_base` | `HOME`, `LANG`, `PATH`, `TERM`, `XDG_RUNTIME_DIR`, `XDG_CACHE_HOME=$HOME/.cache` |
 | `bwrap_sandbox` | `--unshare-all`, optional `--share-net` / `--new-session` |
 | `bwrap_seccomp` | Compile `seccomp/default.conf` (optionally merged with extra rules) or a syscall allowlist at runtime, then add one `--seccomp` descriptor |
-| `bwrap_resolve_files` | Resolve file arguments to bind mounts; `--layout=leaf` (default: mount each argument itself) or `--layout=parent` (mount its containing directory); `--` ends option parsing; the filesystem root is always refused |
+| `bwrap_resolve_files` | Resolve file arguments to bind mounts; `--layout=leaf` (default: mount each argument itself) or `--layout=parent` (mount its containing directory); `--` ends option parsing; the filesystem root is always refused, both layouts refuse `$HOME` and its ancestors (descendants stay bindable), and parent falls back to the argument when the containing directory would expose them |
 | `bwrap_bind_dir` | Create state dirs on host + add `--bind` |
 | `bwrap_ro_bind_dir` | Bind pre-existing dirs read-only, skip missing |
 | `bwrap_ssh_agent` | SSH agent socket forwarding |

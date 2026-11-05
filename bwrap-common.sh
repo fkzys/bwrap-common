@@ -368,10 +368,17 @@ bwrap_themes() {
     :
 }
 
+_bwrap_is_home_or_ancestor() {
+    local _home=$1 _path=$2
+    [[ -n "$_home" && ( "$_path" == "$_home" || "$_home" == "$_path"/* ) ]]
+}
+
 # Resolve file arguments to bind mounts.
 # Usage: bwrap_resolve_files BINDS_ARRAY ARGS_ARRAY [LAYOUT] [MODE] ARG...
 #   LAYOUT  leaf (default) mounts each argument itself; parent mounts the
-#           directory containing it (legacy behavior)
+#           directory containing it (legacy behavior). Both refuse the
+#           filesystem root, HOME, and HOME's ancestors; parent falls back to
+#           the argument when the containing directory would expose them.
 #   MODE    --ro-bind (default), --bind, --dev-bind, --*-try
 bwrap_resolve_files() {
     local -n _binds=$1
@@ -404,6 +411,13 @@ bwrap_resolve_files() {
             echo "bwrap_resolve_files: unknown layout: $_layout" >&2
             return 2 ;;
     esac
+    # HOME can be a symlink (/home -> /var/home), while targets are resolved
+    # with realpath; compare against the physical path.
+    local _home_real=""
+    if [[ -n "${HOME:-}" ]]; then
+        _home_real="$(realpath -m -- "$HOME" 2>/dev/null)" || _home_real=""
+        [[ -n "$_home_real" ]] || _home_real=$HOME
+    fi
     local arg
     for arg in "$@"; do
         if [[ "$arg" == -* ]]; then
@@ -420,10 +434,17 @@ bwrap_resolve_files() {
                         _bwrap_warn "bwrap_resolve_files: refusing to bind the filesystem root for: $arg"
                         ;;
                     /usr|/usr/*|/etc|/etc/*|/proc|/proc/*|/dev|/dev/*|/tmp|/tmp/*|/sys|/sys/*) ;;
-                    "${HOME}")
-                        _binds+=("$_mode" "$_real" "$_real")
+                    *)
+                        if _bwrap_is_home_or_ancestor "$_home_real" "$_dir"; then
+                            if _bwrap_is_home_or_ancestor "$_home_real" "$_real"; then
+                                _bwrap_warn "bwrap_resolve_files: refusing to bind HOME or an ancestor for: $arg"
+                            else
+                                _binds+=("$_mode" "$_real" "$_real")
+                            fi
+                        else
+                            _binds+=("$_mode" "$_dir" "$_dir")
+                        fi
                         ;;
-                    *) _binds+=("$_mode" "$_dir" "$_dir") ;;
                 esac
             else
                 case "$_real" in
@@ -431,7 +452,16 @@ bwrap_resolve_files() {
                         _bwrap_warn "bwrap_resolve_files: refusing to bind the filesystem root for: $arg"
                         ;;
                     /usr|/usr/*|/etc|/etc/*|/proc|/proc/*|/dev|/dev/*|/tmp|/tmp/*|/sys|/sys/*) ;;
-                    *) _binds+=("$_mode" "$_real" "$_real") ;;
+                    *)
+                        # Binding HOME or one of its ancestors exposes the whole
+                        # home tree (and siblings) regardless of the bind mode.
+                        # Descendants such as HOME/projects remain valid targets.
+                        if _bwrap_is_home_or_ancestor "$_home_real" "$_real"; then
+                            _bwrap_warn "bwrap_resolve_files: refusing to bind HOME or an ancestor for: $arg"
+                        else
+                            _binds+=("$_mode" "$_real" "$_real")
+                        fi
+                        ;;
                 esac
             fi
             _args+=("$_real")

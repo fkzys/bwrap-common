@@ -77,8 +77,12 @@ Each function is called with a fresh empty array, then the array contents are in
   skipped optional resource is no longer silent. `bwrap_resolve_files` is
   checked with both an explicit and an omitted bind mode, stays silent for
   non-path slash arguments (`user/repo`, URLs), refuses `/`, a depth-1 path, or a
-  symlink resolving to `/` instead of emitting `--bind / /`, and covers both
-  layouts: `--layout=leaf` (default) binds the argument itself while
+  symlink resolving to `/` instead of emitting `--bind / /`, refuses `$HOME` and
+  its ancestors in both layouts and in both bind and read-only modes while
+  still binding descendants and siblings (the refused argument is still
+  forwarded), resolves a symlinked `$HOME`, and makes parent fall back to the
+  argument when its containing directory would expose `$HOME`/ancestors.
+  Layouts: `--layout=leaf` (default) binds the argument itself while
   `--layout=parent` binds its containing directory; a bare `leaf`/`parent` is an
   ordinary argument and `--` ends option parsing. `BWRAP_QUIET=1`
   silences the warning. The `gpu` case runs only when `/dev/dri` is absent and

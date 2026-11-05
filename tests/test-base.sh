@@ -448,6 +448,96 @@ else
     skip "resolve_files layout cases (HOME not writable)"
 fi
 
+test_resolve_files_home_guard() {
+    local _base="${HOME}/.bwrap-common-home-guard-$$"
+    if ! mkdir -p "${_base}/home/user/sub" "${_base}/home/other" 2>/dev/null; then
+        rm -rf "$_base"
+        skip "resolve_files HOME guard (HOME not writable)"
+        return
+    fi
+    local HOME="${_base}/home/user"
+    local _ancestor="${_base}/home"
+    local _sibling="${_base}/home/other"
+    : > "${HOME}/sub/file.bin"
+
+    local -a B A
+    B=(); A=()
+    bwrap_resolve_files B A --bind "$HOME" 2>"$WARN_ERR"
+    has_triple B --bind "$HOME" "$HOME" \
+        && fail "resolve_files (leaf) bound HOME" || ok "resolve_files (leaf) refuses HOME"
+    grep -qxF "bwrap_resolve_files: refusing to bind HOME or an ancestor for: $HOME" "$WARN_ERR" \
+        && ok "resolve_files (leaf) warns when refusing HOME" || fail "resolve_files HOME warning absent"
+    [[ ${#A[@]} -eq 1 && "${A[0]}" == "$HOME" ]] \
+        && ok "resolve_files keeps the refused argument for the child process" \
+        || fail "resolve_files dropped the refused argument"
+
+    B=(); A=()
+    bwrap_resolve_files B A --ro-bind "$HOME" 2>/dev/null
+    has_triple B --ro-bind "$HOME" "$HOME" \
+        && fail "resolve_files (leaf, ro) bound HOME" || ok "resolve_files (leaf) refuses HOME in ro mode"
+
+    B=(); A=()
+    bwrap_resolve_files B A --bind "$_ancestor" 2>"$WARN_ERR"
+    has_triple B --bind "$_ancestor" "$_ancestor" \
+        && fail "resolve_files (leaf) bound an ancestor of HOME" || ok "resolve_files (leaf) refuses an ancestor of HOME"
+    grep -qxF "bwrap_resolve_files: refusing to bind HOME or an ancestor for: $_ancestor" "$WARN_ERR" \
+        && ok "resolve_files (leaf) warns when refusing an ancestor" || fail "resolve_files ancestor warning absent"
+
+    B=(); A=()
+    bwrap_resolve_files B A --bind "${HOME}/sub" 2>/dev/null
+    has_triple B --bind "${HOME}/sub" "${HOME}/sub" \
+        && ok "resolve_files (leaf) still binds a HOME descendant" || fail "resolve_files refused a HOME descendant"
+
+    B=(); A=()
+    bwrap_resolve_files B A --bind "$_sibling" 2>/dev/null
+    has_triple B --bind "$_sibling" "$_sibling" \
+        && ok "resolve_files (leaf) still binds a HOME sibling" || fail "resolve_files refused a HOME sibling"
+
+    B=(); A=()
+    bwrap_resolve_files B A --layout=parent --bind "$HOME" 2>"$WARN_ERR"
+    has_triple B --bind "$HOME" "$HOME" \
+        && fail "resolve_files (parent) bound HOME" || ok "resolve_files (parent) refuses HOME"
+    has_triple B --bind "$_ancestor" "$_ancestor" \
+        && fail "resolve_files (parent) bound an ancestor of HOME" \
+        || ok "resolve_files (parent) does not bind the ancestor"
+    grep -qxF "bwrap_resolve_files: refusing to bind HOME or an ancestor for: $HOME" "$WARN_ERR" \
+        && ok "resolve_files (parent) warns when refusing HOME" \
+        || fail "resolve_files parent HOME warning absent"
+
+    B=(); A=()
+    bwrap_resolve_files B A --layout=parent --bind "${HOME}/sub/file.bin" 2>/dev/null
+    has_triple B --bind "${HOME}/sub" "${HOME}/sub" \
+        && ok "resolve_files (parent) binds the containing directory for a descendant" \
+        || fail "resolve_files (parent) did not bind the containing directory for a descendant"
+
+    B=(); A=()
+    bwrap_resolve_files B A --layout=parent --bind "$_sibling" 2>/dev/null
+    has_triple B --bind "$_sibling" "$_sibling" \
+        && ok "resolve_files (parent) narrows a HOME sibling to the argument" \
+        || fail "resolve_files (parent) did not narrow a HOME sibling"
+    has_triple B --bind "$_ancestor" "$_ancestor" \
+        && fail "resolve_files (parent) bound the ancestor for a sibling" \
+        || ok "resolve_files (parent) avoids binding the ancestor for a sibling"
+
+    B=(); A=()
+    bwrap_resolve_files B A --layout=parent --bind "${HOME}/sub" 2>/dev/null
+    has_triple B --bind "${HOME}/sub" "${HOME}/sub" \
+        && ok "resolve_files (parent) falls back to a direct HOME child" \
+        || fail "resolve_files (parent) did not bind a direct HOME child"
+
+    HOME="${_base}/link"
+    ln -s "${_base}/home/user" "$HOME"
+    B=(); A=()
+    bwrap_resolve_files B A --bind "$HOME" 2>"$WARN_ERR"
+    has_triple B --bind "${_base}/home/user" "${_base}/home/user" \
+        && fail "resolve_files bound a symlinked HOME" || ok "resolve_files resolves a symlinked HOME"
+    grep -qxF "bwrap_resolve_files: refusing to bind HOME or an ancestor for: $HOME" "$WARN_ERR" \
+        && ok "resolve_files warns for a symlinked HOME" || fail "resolve_files symlinked HOME warning absent"
+
+    rm -rf "$_base"
+}
+test_resolve_files_home_guard
+
 BARG=(); BARGA=()
 bwrap_resolve_files BARG BARGA -- --bind
 [[ ${#BARGA[@]} -eq 1 && "${BARGA[0]}" == "--bind" ]] \
