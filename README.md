@@ -12,6 +12,7 @@ takes an array variable name and appends bwrap arguments to it via nameref.
     - [Functions](docs/usage.md#functions)
         - [Low-level helpers](docs/usage.md#low-level-helpers)
         - [High-level composites](docs/usage.md#high-level-composites)
+    - [Resolving file arguments](docs/usage.md#resolving-file-arguments)
     - [D-Bus](docs/usage.md#d-bus)
         - [Session-bus rules](docs/usage.md#session-bus-rules)
         - [Adding system-bus access](docs/usage.md#adding-system-bus-access)

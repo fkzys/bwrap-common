@@ -58,6 +58,44 @@
 - `$6` — themes: `yes`/`no` (default `yes`)
 - `$7` — seccomp: `default`/`none` (default `default`); `default` returns non-zero if the default config or generator is unavailable; no blob is used; use `bwrap_seccomp` directly for an allowlist or `default` plus extra rules
 
+## Resolving file arguments
+
+`bwrap_resolve_files` fills two arrays: `FILE_BINDS` (bwrap mount arguments)
+and `ARGS` (the rewritten paths to pass to the application). `FILE_BINDS` is a
+staging array: resolve arguments early, then merge it into the final bwrap
+argv with `A+=("${FILE_BINDS[@]}")` after the base mounts. Pass `"${ARGS[@]}"`,
+not `"$@"`, so symlinks and `..` resolve to paths that exist in the sandbox.
+
+Bind only the named files:
+
+```sh
+FILE_BINDS=(); ARGS=()
+bwrap_resolve_files FILE_BINDS ARGS --layout=leaf --ro-bind "$@"
+
+A=()
+bwrap_gui_setup A
+A+=("${FILE_BINDS[@]}")
+bwrap_gui_finish A
+bwrap_exec "${A[@]}" -- /usr/bin/app "${ARGS[@]}"
+```
+
+Bind the containing directory — needed when the application reads sibling files:
+
+```sh
+FILE_BINDS=(); ARGS=()
+bwrap_resolve_files FILE_BINDS ARGS --layout=parent --ro-bind "$@"
+
+A=()
+bwrap_gui_setup A
+A+=("${FILE_BINDS[@]}")
+bwrap_gui_finish A
+bwrap_exec "${A[@]}" -- /usr/bin/app "${ARGS[@]}"
+```
+
+A hard `--ro-bind`/`--bind`/`--dev-bind` returns non-zero when `$HOME` or an
+ancestor is refused; the mount is skipped but the path stays in `ARGS`.
+`--ro-bind-try` (and other `*-try` modes) return zero instead.
+
 ## D-Bus
 
 ### Session-bus rules
