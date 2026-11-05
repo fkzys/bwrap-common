@@ -81,11 +81,17 @@ Each function is called with a fresh empty array, then the array contents are in
   its ancestors in both layouts and in both bind and read-only modes while
   still binding descendants and siblings (the refused argument is still
   forwarded), resolves a symlinked `$HOME`, and makes parent fall back to the
-  argument when its containing directory would expose `$HOME`/ancestors.
-  Layouts: `--layout=leaf` (default) binds the argument itself while
-  `--layout=parent` binds its containing directory; a bare `leaf`/`parent` is an
-  ordinary argument and `--` ends option parsing. `BWRAP_QUIET=1`
-  silences the warning. The `gpu` case runs only when `/dev/dri` is absent and
+  argument when its containing directory would expose `$HOME`/ancestors. A
+  refused hard HOME/ancestor bind returns non-zero, while `*-try` modes and
+  allowed binds return 0; `BWRAP_QUIET=1` silences the warning but not the
+  return code. The
+  guard test creates its base with `mktemp -d` outside `/tmp` (trying
+  `/var/tmp`, then `/run/user/$UID`, and skipping any base that resolves under
+  `/tmp`) and registers it with the suite's EXIT cleanup. Layouts:
+  `--layout=leaf` (default) binds the argument itself
+  while `--layout=parent` binds its containing directory; a bare
+  `leaf`/`parent` is an ordinary argument and `--` ends option parsing. The
+  `gpu` case runs only when `/dev/dri` is absent and
   no `/dev/nvidia*` exists; the X11-socket case runs only when
   `/tmp/.X11-unix` is absent
 

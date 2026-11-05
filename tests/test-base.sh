@@ -449,10 +449,25 @@ else
 fi
 
 test_resolve_files_home_guard() {
-    local _base="${HOME}/.bwrap-common-home-guard-$$"
+    local _base="" _candidate
+    for _candidate in /var/tmp "/run/user/$(id -u)"; do
+        _base=$(mktemp -d "${_candidate}/bwrap-common-home-guard.XXXXXX" 2>/dev/null) || continue
+        case "$(realpath -m -- "$_base")" in
+            /tmp|/tmp/*)
+                rm -rf -- "$_base"
+                _base=""
+                continue
+                ;;
+        esac
+        break
+    done
+    if [[ -z "$_base" ]]; then
+        skip "resolve_files HOME guard (no temp base outside /tmp)"
+        return
+    fi
+    TEST_EXTRA_CLEANUP+=("$_base")
     if ! mkdir -p "${_base}/home/user/sub" "${_base}/home/other" 2>/dev/null; then
-        rm -rf "$_base"
-        skip "resolve_files HOME guard (HOME not writable)"
+        skip "resolve_files HOME guard (temp base not writable)"
         return
     fi
     local HOME="${_base}/home/user"
@@ -461,8 +476,12 @@ test_resolve_files_home_guard() {
     : > "${HOME}/sub/file.bin"
 
     local -a B A
+    local _rc=0
     B=(); A=()
-    bwrap_resolve_files B A --bind "$HOME" 2>"$WARN_ERR"
+    bwrap_resolve_files B A --bind "$HOME" 2>"$WARN_ERR" || _rc=$?
+    [[ $_rc -ne 0 ]] \
+        && ok "resolve_files returns non-zero for a refused hard bind" \
+        || fail "resolve_files returned zero for a refused hard bind"
     has_triple B --bind "$HOME" "$HOME" \
         && fail "resolve_files (leaf) bound HOME" || ok "resolve_files (leaf) refuses HOME"
     grep -qxF "bwrap_resolve_files: refusing to bind HOME or an ancestor for: $HOME" "$WARN_ERR" \
@@ -471,10 +490,30 @@ test_resolve_files_home_guard() {
         && ok "resolve_files keeps the refused argument for the child process" \
         || fail "resolve_files dropped the refused argument"
 
-    B=(); A=()
-    bwrap_resolve_files B A --ro-bind "$HOME" 2>/dev/null
+    B=(); A=(); _rc=0
+    BWRAP_QUIET=1 bwrap_resolve_files B A --bind "$HOME" 2>"$WARN_ERR" || _rc=$?
+    [[ $_rc -ne 0 && ! -s "$WARN_ERR" ]] \
+        && ok "BWRAP_QUIET keeps a refused hard bind non-zero without a warning" \
+        || fail "BWRAP_QUIET lost the refusal return code or warned"
+
+    B=(); A=(); _rc=0
+    bwrap_resolve_files B A --ro-bind "$HOME" 2>/dev/null || _rc=$?
+    [[ $_rc -ne 0 ]] \
+        && ok "resolve_files returns non-zero for a refused hard ro bind" \
+        || fail "resolve_files returned zero for a refused hard ro bind"
     has_triple B --ro-bind "$HOME" "$HOME" \
         && fail "resolve_files (leaf, ro) bound HOME" || ok "resolve_files (leaf) refuses HOME in ro mode"
+
+    B=(); A=(); _rc=0
+    bwrap_resolve_files B A --bind-try "$HOME" 2>/dev/null || _rc=$?
+    [[ $_rc -eq 0 ]] \
+        && ok "resolve_files returns zero for a refused try bind" \
+        || fail "resolve_files returned non-zero for a refused try bind"
+    has_triple B --bind-try "$HOME" "$HOME" \
+        && fail "resolve_files (leaf, try) bound HOME" || ok "resolve_files (leaf, try) refuses HOME"
+    [[ ${#A[@]} -eq 1 && "${A[0]}" == "$HOME" ]] \
+        && ok "resolve_files keeps the refused try argument" \
+        || fail "resolve_files dropped the refused try argument"
 
     B=(); A=()
     bwrap_resolve_files B A --bind "$_ancestor" 2>"$WARN_ERR"
@@ -483,8 +522,11 @@ test_resolve_files_home_guard() {
     grep -qxF "bwrap_resolve_files: refusing to bind HOME or an ancestor for: $_ancestor" "$WARN_ERR" \
         && ok "resolve_files (leaf) warns when refusing an ancestor" || fail "resolve_files ancestor warning absent"
 
-    B=(); A=()
-    bwrap_resolve_files B A --bind "${HOME}/sub" 2>/dev/null
+    B=(); A=(); _rc=0
+    bwrap_resolve_files B A --bind "${HOME}/sub" 2>/dev/null || _rc=$?
+    [[ $_rc -eq 0 ]] \
+        && ok "resolve_files returns zero when it binds a HOME descendant" \
+        || fail "resolve_files returned non-zero for a HOME descendant"
     has_triple B --bind "${HOME}/sub" "${HOME}/sub" \
         && ok "resolve_files (leaf) still binds a HOME descendant" || fail "resolve_files refused a HOME descendant"
 
@@ -493,8 +535,11 @@ test_resolve_files_home_guard() {
     has_triple B --bind "$_sibling" "$_sibling" \
         && ok "resolve_files (leaf) still binds a HOME sibling" || fail "resolve_files refused a HOME sibling"
 
-    B=(); A=()
-    bwrap_resolve_files B A --layout=parent --bind "$HOME" 2>"$WARN_ERR"
+    B=(); A=(); _rc=0
+    bwrap_resolve_files B A --layout=parent --bind "$HOME" 2>"$WARN_ERR" || _rc=$?
+    [[ $_rc -ne 0 ]] \
+        && ok "resolve_files returns non-zero for a refused parent hard bind" \
+        || fail "resolve_files returned zero for a refused parent hard bind"
     has_triple B --bind "$HOME" "$HOME" \
         && fail "resolve_files (parent) bound HOME" || ok "resolve_files (parent) refuses HOME"
     has_triple B --bind "$_ancestor" "$_ancestor" \
@@ -527,8 +572,11 @@ test_resolve_files_home_guard() {
 
     HOME="${_base}/link"
     ln -s "${_base}/home/user" "$HOME"
-    B=(); A=()
-    bwrap_resolve_files B A --bind "$HOME" 2>"$WARN_ERR"
+    B=(); A=(); _rc=0
+    bwrap_resolve_files B A --bind "$HOME" 2>"$WARN_ERR" || _rc=$?
+    [[ $_rc -ne 0 ]] \
+        && ok "resolve_files returns non-zero for a refused symlinked HOME" \
+        || fail "resolve_files returned zero for a refused symlinked HOME"
     has_triple B --bind "${_base}/home/user" "${_base}/home/user" \
         && fail "resolve_files bound a symlinked HOME" || ok "resolve_files resolves a symlinked HOME"
     grep -qxF "bwrap_resolve_files: refusing to bind HOME or an ancestor for: $HOME" "$WARN_ERR" \

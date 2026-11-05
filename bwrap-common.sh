@@ -380,6 +380,8 @@ _bwrap_is_home_or_ancestor() {
 #           filesystem root, HOME, and HOME's ancestors; parent falls back to
 #           the argument when the containing directory would expose them.
 #   MODE    --ro-bind (default), --bind, --dev-bind, --*-try
+#   Returns 1 when a non-try bind is refused for HOME/ancestor; -try modes
+#   still return 0.
 bwrap_resolve_files() {
     local -n _binds=$1
     local -n _args=$2
@@ -418,7 +420,7 @@ bwrap_resolve_files() {
         _home_real="$(realpath -m -- "$HOME" 2>/dev/null)" || _home_real=""
         [[ -n "$_home_real" ]] || _home_real=$HOME
     fi
-    local arg
+    local _refused=0 arg
     for arg in "$@"; do
         if [[ "$arg" == -* ]]; then
             _args+=("$arg")
@@ -438,6 +440,7 @@ bwrap_resolve_files() {
                         if _bwrap_is_home_or_ancestor "$_home_real" "$_dir"; then
                             if _bwrap_is_home_or_ancestor "$_home_real" "$_real"; then
                                 _bwrap_warn "bwrap_resolve_files: refusing to bind HOME or an ancestor for: $arg"
+                                _refused=1
                             else
                                 _binds+=("$_mode" "$_real" "$_real")
                             fi
@@ -458,6 +461,7 @@ bwrap_resolve_files() {
                         # Descendants such as HOME/projects remain valid targets.
                         if _bwrap_is_home_or_ancestor "$_home_real" "$_real"; then
                             _bwrap_warn "bwrap_resolve_files: refusing to bind HOME or an ancestor for: $arg"
+                            _refused=1
                         else
                             _binds+=("$_mode" "$_real" "$_real")
                         fi
@@ -472,6 +476,10 @@ bwrap_resolve_files() {
             _args+=("$arg")
         fi
     done
+    if (( _refused )) && [[ "$_mode" != *-try ]]; then
+        return 1
+    fi
+    return 0
 }
 
 # ── Common home tmpfs skeleton ────────────────────────────────

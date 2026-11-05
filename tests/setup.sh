@@ -12,7 +12,14 @@ if [[ ! -w "$TMPDIR_TEST" ]]; then
     echo "FATAL: TMPDIR_TEST is not writable: $TMPDIR_TEST" >&2
     exit 1
 fi
-trap 'rm -rf "$TMPDIR_TEST"' EXIT
+TEST_EXTRA_CLEANUP=()
+_test_cleanup() {
+    rm -rf -- "$TMPDIR_TEST"
+    if (( ${#TEST_EXTRA_CLEANUP[@]} )); then
+        rm -rf -- "${TEST_EXTRA_CLEANUP[@]}"
+    fi
+}
+trap _test_cleanup EXIT
 
 # ── seccomp fixtures ────────────────────────────────────────
 
