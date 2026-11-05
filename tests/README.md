@@ -4,7 +4,7 @@
 
 | File | Language | Framework | What it tests |
 |------|----------|-----------|---------------|
-| `tests/test.sh` | Bash | Custom assertions | Source guard (re-source idempotency, modules load from a foreign working directory), function definitions (all 29 public functions exist), VERSION variable, `bwrap_base` (non-empty output, `--clearenv` first by default, explicit `--setenv` preserved, idempotent repeated calls, opt-out and invalid mode handling, `--ro-bind /usr`, `--proc /proc`, `--tmpfs /tmp`, default private `/dev/shm` tmpfs, opt-in host `/dev/shm` bind, invalid shm mode rejection), `bwrap_home_tmpfs` (`--tmpfs $HOME`, `--dir ~/.config`), `bwrap_env_base` (HOME/PATH/TERM/XDG_RUNTIME_DIR env vars; XDG_CACHE_HOME normalized to private `$HOME/.cache`), `bwrap_sandbox` (`--unshare-all`, `--die-with-parent`, `--new-session`, network/new-session toggles), `bwrap_hardened_malloc` (omitted/default and light variants succeed when present and fail when missing; omitted defaults to full `default`), `bwrap_no_hardened_malloc` (stub `/usr/lib/libhardened_malloc.so.empty` bound over both hardened_malloc variants when installed), `bwrap_runtime_dir` (XDG_RUNTIME_DIR directory creation), `bwrap_gpu`/`bwrap_lib64` (no-error execution, non-empty output), `bwrap_bind_dir` (directory creation, `--bind` flags, multiple dirs), `bwrap_ro_bind_dir` (existing dir bound, nonexistent dir skipped), `require_dir` (existing dir passes, missing dir fails), `bwrap_fcitx` (QT_IM_MODULE/XMODIFIERS env vars), `bwrap_gui_setup` (composite: base + home_tmpfs, with/without network, GPU toggle, shm and clearenv passthrough, exact composition), `bwrap_gui_finish` (composite: sandbox flags, `--clearenv` before explicit `--setenv`, malloc=no variant, dbus modes with filtered default, seccomp default/none/rejection), `bwrap_seccomp` (none/default, default+extra in one combined filter, missing/invalid/arch-mismatched filters fail closed, cache hit/miss and tmpfs fallback, allowlist compile+cache, filter fd cleanup, fail-closed errors, duplicate filters), `bwrap_ssh_agent` (empty without SSH_AUTH_SOCK), `bwrap_dbus_system` (no-error execution), `bwrap_exec` (exec vs. proxy branch selection, exact argument forwarding, exit-status propagation, D-Bus proxy cleanup, stdin inheritance — regression test for commit d308327) |
+| `tests/test.sh` | Bash | Custom assertions | Source guard (re-source idempotency, modules load from a foreign working directory), function definitions (all 29 public functions exist), VERSION variable, `bwrap_base` (non-empty output, `--clearenv` first by default, explicit `--setenv` preserved, idempotent repeated calls, opt-out and invalid mode handling, `--ro-bind /usr`, `--proc /proc`, `--tmpfs /tmp`, default private `/dev/shm` tmpfs, opt-in host `/dev/shm` bind, invalid shm mode rejection), `bwrap_home_tmpfs` (`--tmpfs $HOME`, `--dir ~/.config`), `bwrap_env_base` (HOME/PATH/TERM/XDG_RUNTIME_DIR env vars; XDG_CACHE_HOME normalized to private `$HOME/.cache`), `bwrap_sandbox` (`--unshare-all`, `--die-with-parent`, `--new-session`, network/new-session toggles), `bwrap_hardened_malloc` (omitted/default and light variants succeed when present and fail when missing; omitted defaults to full `default`), `bwrap_no_hardened_malloc` (stub `/usr/lib/libhardened_malloc.so.empty` bound over both hardened_malloc variants when installed), `bwrap_runtime_dir` (XDG_RUNTIME_DIR directory creation), `bwrap_gpu`/`bwrap_lib64` (no-error execution, non-empty output), `bwrap_bind_dir` (directory creation, `--bind` flags, multiple dirs), `bwrap_ro_bind_dir` (existing dir bound, nonexistent dir skipped), `require_dir` (existing dir passes, missing dir fails), `bwrap_fcitx` (QT_IM_MODULE/XMODIFIERS env vars; caller-only target paths, hard-fail on tampered path), `bwrap_gui_setup` (composite: base + home_tmpfs, with/without network, GPU toggle, shm and clearenv passthrough, exact composition), `bwrap_gui_finish` (composite: sandbox flags, `--clearenv` before explicit `--setenv`, malloc=no variant, dbus modes with filtered default, seccomp default/none/rejection), `bwrap_seccomp` (none/default, default+extra in one combined filter, missing/invalid/arch-mismatched filters fail closed, cache hit/miss and tmpfs fallback, allowlist compile+cache, filter fd cleanup, fail-closed errors, duplicate filters), `bwrap_ssh_agent` (empty without SSH_AUTH_SOCK), `bwrap_dbus_system` (no-error execution), `bwrap_exec` (exec vs. proxy branch selection, exact argument forwarding, exit-status propagation, D-Bus proxy cleanup, stdin inheritance — regression test for commit d308327) |
 | `tests/seccomp-check.sh` | Bash + fixtures C | Self-contained probe | Builds `bwrap-seccomp-gen`, compiles `seccomp/default.conf` at runtime, runs the `tests/fixtures/seccomp-probe.c` probe in a real `bwrap --unshare-all` sandbox, invokes every rule from `seccomp/default.conf`, checks `EPERM`/`ENOSYS`, verifies argument conditions (`clone`, `ioctl`, `personality`), and fails if a config rule has no test or the filter is inactive |
 | `tests/arch-table-check.sh` | Bash + `bwrap-seccomp-gen` | Generator/table cross-check | Generates a minimal BPF blob with `--arch` for each known architecture and compares header bytes 12–15 with `_bwrap_seccomp_arch_magic()`; architectures that libseccomp cannot cross-add are reported as `SKIP` |
 
@@ -36,10 +36,10 @@ bash tests/test.sh
 
 The test script provides a minimal assertion framework and array inspection helpers:
 
-- **Assertion functions**: `ok`/`fail` — both always exit 0, so `cond && ok "..." || fail "..."` stays unambiguous even if writing the message to stdout fails
+- **Assertion functions**: `ok`/`fail`/`skip` — all always exit 0, so `cond && ok "..." || fail "..."` stays unambiguous even if writing the message to stdout fails; `skip` records a test that did not run because a host prerequisite was unavailable (missing stub library, not running as root, a non-symlink `resolv.conf`, an unknown host arch), so skipped coverage is never mistaken for passed coverage
 - **Array helpers**: `has_arg` (flag present), `has_pair` (consecutive flag + value), `has_triple` (three consecutive values), `count_flag` (count occurrences of a flag), `arrays_equal` (exact element-wise comparison of two arrays)
 - **Section headers**: `section` for grouping related tests
-- **Summary**: final pass/fail counts; exits non-zero if any test failed
+- **Summary**: final pass/fail/skip counts, with every skipped test listed under `skipped:` at the end (same place failures surface); exits non-zero only if any test failed
 
 ### Source and setup
 
@@ -68,16 +68,30 @@ Each function is called with a fresh empty array, then the array contents are in
 - **`bwrap_bind_dir`**: verifies directory creation on the host filesystem and `--bind` flag generation; tests multiple directories in a single call
 - **`bwrap_ro_bind_dir`**: verifies `--ro-bind` for existing directories and empty output for nonexistent paths
 - **`require_dir`**: verifies success for `/tmp` and failure (in a subshell) for a nonexistent path
-- **`bwrap_fcitx`**: verifies `--setenv QT_IM_MODULE` and `--setenv XMODIFIERS` for input method support
+- **`bwrap_fcitx`**: verifies `--setenv QT_IM_MODULE` and `--setenv XMODIFIERS` for input method support, and that only the caller's own target paths (`/tmp/fcitx5-<euid>`, `$XDG_RUNTIME_DIR/fcitx5`) are used: a caller-owned directory is bound via `--bind-fd`, a symlinked or foreign-owned path hard-fails, and a plain file is ignored
 - **`bwrap_ssh_agent`**: verifies empty output when `SSH_AUTH_SOCK` is unset
 - **unavailable-resource warnings**: `bwrap_ro_bind_dir`, `bwrap_ssh_agent`,
   `bwrap_themes`, `bwrap_audio`, `bwrap_wayland`, `bwrap_x11`, `bwrap_gpu`,
   `bwrap_resolv`, and `bwrap_resolve_files` print a warning to stderr (and
   append nothing) when the resource they were asked for is missing, so a
   skipped optional resource is no longer silent. `bwrap_resolve_files` is
-  checked with both an explicit and an omitted (`default`) mode, and stays
-  silent for non-path slash arguments (`user/repo`, URLs). `BWRAP_QUIET=1`
-  silences the warning. The `gpu` case runs only when `/dev/dri` is absent and
+  checked with both an explicit and an omitted bind mode, stays silent for
+  non-path slash arguments (`user/repo`, URLs), refuses `/`, a depth-1 path, or a
+  symlink resolving to `/` instead of emitting `--bind / /`, refuses `$HOME` and
+  its ancestors in both layouts and in both bind and read-only modes while
+  still binding descendants and siblings (the refused argument is still
+  forwarded), resolves a symlinked `$HOME`, and makes parent fall back to the
+  argument when its containing directory would expose `$HOME`/ancestors. A
+  refused hard HOME/ancestor bind returns non-zero, while `*-try` modes and
+  allowed binds return 0; `BWRAP_QUIET=1` silences the warning but not the
+  return code. The
+  guard test creates its base with `mktemp -d` outside `/tmp` (trying
+  `/var/tmp`, then `/run/user/$UID`, and skipping any base that resolves under
+  `/tmp`) and registers it with the suite's EXIT cleanup. Layouts:
+  `--layout=leaf` (default) binds the argument itself
+  while `--layout=parent` binds its containing directory; a bare
+  `leaf`/`parent` is an ordinary argument and `--` ends option parsing. The
+  `gpu` case runs only when `/dev/dri` is absent and
   no `/dev/nvidia*` exists; the X11-socket case runs only when
   `/tmp/.X11-unix` is absent
 
@@ -105,8 +119,8 @@ shell-side logic without loading a real filter into the kernel:
 - changing the generator `--version` changes the cache key and forces a rebuild
 - four concurrent cache writers all succeed and leave one valid checksummed entry
 - pre-planted cache entries in `0777` and `0770` directories are rejected and
-  bypassed for the runtime fallback; a foreign-owner case runs when `chown` is
-  available
+  bypassed for the runtime fallback; a foreign-owner case runs only as root
+  (a non-root `chown` to another owner fails)
 - default+extra appends one `--seccomp` (never `--add-seccomp-fd`), passes the
   user rules through `--extra -`, compiles once, reuses the cache, and closes
   the descriptor on cleanup

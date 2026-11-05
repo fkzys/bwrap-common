@@ -140,8 +140,8 @@ if [[ ${#RESOLV_REF[@]} -ge 2 ]]; then
         fail "net=yes gpu=yes output differs from expected composition"
     fi
 else
-    ok "resolv assertion skipped (/etc/resolv.conf is not a symlink)"
-    ok "net=yes gpu=yes resolv assertion skipped (/etc/resolv.conf is not a symlink)"
+    skip "resolv assertion (/etc/resolv.conf is not a symlink)"
+    skip "net=yes gpu=yes resolv assertion (/etc/resolv.conf is not a symlink)"
 fi
 
 # ── bwrap_gui_finish ────────────────────────────────────────
@@ -165,7 +165,7 @@ if [[ -f /usr/lib/libhardened_malloc.so.empty ]]; then
     has_triple S "--ro-bind" "/usr/lib/libhardened_malloc.so.empty" "/usr/lib/libhardened_malloc.so" \
         && ok "malloc=no masks hardened_malloc with stub" || fail "malloc=no stub bind missing"
 else
-    ok "malloc=no stub bind skipped (libhardened_malloc.so.empty not installed)"
+    skip "malloc=no stub bind (libhardened_malloc.so.empty not installed)"
 fi
 
 # ── bwrap_hardened_malloc ──────────────────────────────────

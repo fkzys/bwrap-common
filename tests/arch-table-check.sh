@@ -40,6 +40,7 @@ _archs=(
 _checked=0
 _skipped=0
 _failed=0
+_skip_list=()
 
 for _arch in "${_archs[@]}"; do
     if ! _want=$(_bwrap_seccomp_arch_magic "$_arch"); then
@@ -57,6 +58,7 @@ for _arch in "${_archs[@]}"; do
         if (( _gen_rc == 3 )); then
             printf 'SKIP %s (unsupported by local libseccomp)\n' "$_arch"
             _skipped=$((_skipped + 1))
+            _skip_list+=("$_arch")
             continue
         fi
         echo "FAIL $_arch: generator failed with status $_gen_rc" >&2
@@ -80,5 +82,11 @@ if (( _checked == 0 )); then
     _failed=1
 fi
 
+if (( ${#_skip_list[@]} > 0 )); then
+    echo " skipped:"
+    for _arch in "${_skip_list[@]}"; do
+        echo "  ⊘ $_arch"
+    done
+fi
 echo "arch-table-check: $_checked passed, $_skipped skipped"
 exit "$_failed"

@@ -142,7 +142,7 @@ else
             fail "foreign-owned cache was used (rc=$FOREIGN_RC calls=$FOREIGN_BEFORE/$FOREIGN_CALLS)"
         fi
     else
-        ok "foreign-owner cache test skipped (chown unavailable)"
+        skip "foreign-owner cache test (requires root)"
     fi
 fi
 
@@ -205,7 +205,7 @@ if [[ "$SECCOMP_MAGIC" != "00000000" ]]; then
     SG_RC=$?
     [[ $SG_RC -eq 1 && ${#SG[@]} -eq 0 ]] && ok "arch mismatch fails closed" || fail "arch mismatch returned $SG_RC"
 else
-    ok "arch mismatch test skipped (unknown host arch)"
+    skip "arch mismatch test (unknown host arch)"
 fi
 
 rm -rf "$BWRAP_SECCOMP_CACHE_DIR" "$GEN_COUNTER"

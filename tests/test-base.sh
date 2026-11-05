@@ -188,7 +188,7 @@ if [[ -f /usr/lib/libhardened_malloc.so.empty ]]; then
     has_triple G "--ro-bind" "/usr/lib/libhardened_malloc.so.empty" "/usr/lib/libhardened_malloc.so" \
         && ok "stub bind (default variant) present" || fail "stub bind (default variant) missing"
 else
-    ok "stub binds skipped (libhardened_malloc.so.empty not installed)"
+    skip "stub binds (libhardened_malloc.so.empty not installed)"
 fi
 
 # ── bwrap_runtime_dir ───────────────────────────────────────
@@ -260,6 +260,54 @@ O=()
 bwrap_fcitx O
 has_pair O "--setenv" "QT_IM_MODULE" && ok "sets QT_IM_MODULE" || fail "QT_IM_MODULE missing"
 has_pair O "--setenv" "XMODIFIERS"   && ok "sets XMODIFIERS"   || fail "XMODIFIERS missing"
+_bwrap_fcitx_close_fds
+
+mapfile -t FCTX_PATHS < <(_bwrap_fcitx_paths)
+has_arg FCTX_PATHS "/tmp/fcitx5-${EUID}" \
+    && ok "targets /tmp/fcitx5-<euid>" || fail "missing /tmp/fcitx5-<euid> candidate"
+has_arg FCTX_PATHS "${XDG_RUNTIME_DIR}/fcitx5" \
+    && ok "targets \$XDG_RUNTIME_DIR/fcitx5" || fail "missing \$XDG_RUNTIME_DIR/fcitx5 candidate"
+
+FCTX_RT="${TMPDIR_TEST}/fcitx-rt"
+mkdir -p "${FCTX_RT}/fcitx5"
+FC=()
+XDG_RUNTIME_DIR="$FCTX_RT" bwrap_fcitx FC && FCTX_RC=0 || FCTX_RC=$?
+if [[ $FCTX_RC -eq 0 ]] && has_arg FC "${FCTX_RT}/fcitx5" && has_arg FC --bind-fd; then
+    ok "binds a caller-owned fcitx directory via --bind-fd"
+else
+    fail "did not bind the fcitx directory (rc=$FCTX_RC)"
+fi
+_bwrap_fcitx_close_fds
+rmdir "${FCTX_RT}/fcitx5"
+
+: > "${FCTX_RT}/fcitx5"
+FC=()
+XDG_RUNTIME_DIR="$FCTX_RT" bwrap_fcitx FC 2>/dev/null && FCTX_RC=0 || FCTX_RC=$?
+if [[ $FCTX_RC -eq 0 ]] && ! has_arg FC "${FCTX_RT}/fcitx5"; then
+    ok "ignores a plain file at the fcitx path"
+else
+    fail "mishandled a plain file (rc=$FCTX_RC)"
+fi
+_bwrap_fcitx_close_fds
+rm -f "${FCTX_RT}/fcitx5"
+
+ln -sfn /etc "${FCTX_RT}/fcitx5"
+FC=()
+XDG_RUNTIME_DIR="$FCTX_RT" bwrap_fcitx FC 2>/dev/null && FCTX_RC=0 || FCTX_RC=$?
+[[ $FCTX_RC -ne 0 ]] && ok "hard-fails on a symlinked fcitx path" || fail "accepted a symlinked fcitx path"
+_bwrap_fcitx_close_fds
+rm -f "${FCTX_RT}/fcitx5"
+
+mkdir -p "${FCTX_RT}/fcitx5"
+if chown 65534:65534 "${FCTX_RT}/fcitx5" 2>/dev/null; then
+    FC=()
+    XDG_RUNTIME_DIR="$FCTX_RT" bwrap_fcitx FC 2>/dev/null && FCTX_RC=0 || FCTX_RC=$?
+    [[ $FCTX_RC -ne 0 ]] && ok "hard-fails on a foreign-owned fcitx path" || fail "accepted a foreign-owned fcitx path"
+else
+    skip "fcitx foreign-owner case (requires root)"
+fi
+_bwrap_fcitx_close_fds
+rm -rf "${FCTX_RT}"
 
 
 # ── bwrap_ssh_agent ─────────────────────────────────────────
@@ -356,6 +404,205 @@ if [[ ! -s "$WARN_ERR" && ${#RFA3[@]} -eq 2 ]]; then
 else
     fail "resolve_files warned on non-path arguments"
 fi
+
+# A path whose parent is the filesystem root must never resolve to "/".
+RFR=(); RFRA=()
+bwrap_resolve_files RFR RFRA --bind / 2>/dev/null
+has_triple RFR --bind / / \
+    && fail "resolve_files bound the root for /" || ok "resolve_files refuses / (bind mode)"
+
+RFRD=(); RFRDA=()
+bwrap_resolve_files RFRD RFRDA / 2>/dev/null
+has_triple RFRD --ro-bind / / \
+    && fail "resolve_files bound the root for / (default mode)" || ok "resolve_files refuses / (default mode)"
+
+ln -sfn / "${TMPDIR_TEST}/rootlink"
+RFR2=(); RFRA2=()
+bwrap_resolve_files RFR2 RFRA2 --bind "${TMPDIR_TEST}/rootlink" 2>/dev/null
+has_triple RFR2 --bind / / \
+    && fail "resolve_files bound the root for a symlink to /" || ok "resolve_files refuses a symlink to /"
+
+for ROOTPATH in /home /mnt /opt /var /srv; do
+    [[ -e "$ROOTPATH" ]] || continue
+    for LAYOUT in leaf parent; do
+        RFR3=(); RFRA3=()
+        bwrap_resolve_files RFR3 RFRA3 "--layout=$LAYOUT" --bind "$ROOTPATH" 2>/dev/null
+        has_triple RFR3 --bind / / \
+            && fail "resolve_files ($LAYOUT) bound the root for $ROOTPATH" || ok "resolve_files ($LAYOUT) refuses depth-1 path $ROOTPATH"
+    done
+done
+
+F2DIR="${HOME}/.bwrap-common-test-$$"
+if mkdir -p "$F2DIR" 2>/dev/null; then
+    : > "${F2DIR}/arg.bin"
+    RFL=(); RFLA=()
+    bwrap_resolve_files RFL RFLA "${F2DIR}/arg.bin" 2>/dev/null
+    has_triple RFL --ro-bind "${F2DIR}/arg.bin" "${F2DIR}/arg.bin" \
+        && ok "resolve_files (leaf default) binds the argument itself" || fail "resolve_files (leaf default) did not bind the argument"
+    RFP=(); RFPA=()
+    bwrap_resolve_files RFP RFPA --layout=parent "${F2DIR}/arg.bin" 2>/dev/null
+    has_triple RFP --ro-bind "$F2DIR" "$F2DIR" \
+        && ok "resolve_files (parent mode) binds the containing directory" || fail "resolve_files (parent mode) did not bind the directory"
+    rm -rf "$F2DIR"
+else
+    skip "resolve_files layout cases (HOME not writable)"
+fi
+
+test_resolve_files_home_guard() {
+    local _base="" _candidate
+    for _candidate in /var/tmp "/run/user/$(id -u)"; do
+        _base=$(mktemp -d "${_candidate}/bwrap-common-home-guard.XXXXXX" 2>/dev/null) || continue
+        case "$(realpath -m -- "$_base")" in
+            /tmp|/tmp/*)
+                rm -rf -- "$_base"
+                _base=""
+                continue
+                ;;
+        esac
+        break
+    done
+    if [[ -z "$_base" ]]; then
+        skip "resolve_files HOME guard (no temp base outside /tmp)"
+        return
+    fi
+    TEST_EXTRA_CLEANUP+=("$_base")
+    if ! mkdir -p "${_base}/home/user/sub" "${_base}/home/other" 2>/dev/null; then
+        skip "resolve_files HOME guard (temp base not writable)"
+        return
+    fi
+    local HOME="${_base}/home/user"
+    local _ancestor="${_base}/home"
+    local _sibling="${_base}/home/other"
+    : > "${HOME}/sub/file.bin"
+
+    local -a B A
+    local _rc=0
+    B=(); A=()
+    bwrap_resolve_files B A --bind "$HOME" 2>"$WARN_ERR" || _rc=$?
+    [[ $_rc -ne 0 ]] \
+        && ok "resolve_files returns non-zero for a refused hard bind" \
+        || fail "resolve_files returned zero for a refused hard bind"
+    has_triple B --bind "$HOME" "$HOME" \
+        && fail "resolve_files (leaf) bound HOME" || ok "resolve_files (leaf) refuses HOME"
+    grep -qxF "bwrap_resolve_files: refusing to bind HOME or an ancestor for: $HOME" "$WARN_ERR" \
+        && ok "resolve_files (leaf) warns when refusing HOME" || fail "resolve_files HOME warning absent"
+    [[ ${#A[@]} -eq 1 && "${A[0]}" == "$HOME" ]] \
+        && ok "resolve_files keeps the refused argument for the child process" \
+        || fail "resolve_files dropped the refused argument"
+
+    B=(); A=(); _rc=0
+    BWRAP_QUIET=1 bwrap_resolve_files B A --bind "$HOME" 2>"$WARN_ERR" || _rc=$?
+    [[ $_rc -ne 0 && ! -s "$WARN_ERR" ]] \
+        && ok "BWRAP_QUIET keeps a refused hard bind non-zero without a warning" \
+        || fail "BWRAP_QUIET lost the refusal return code or warned"
+
+    B=(); A=(); _rc=0
+    bwrap_resolve_files B A --ro-bind "$HOME" 2>/dev/null || _rc=$?
+    [[ $_rc -ne 0 ]] \
+        && ok "resolve_files returns non-zero for a refused hard ro bind" \
+        || fail "resolve_files returned zero for a refused hard ro bind"
+    has_triple B --ro-bind "$HOME" "$HOME" \
+        && fail "resolve_files (leaf, ro) bound HOME" || ok "resolve_files (leaf) refuses HOME in ro mode"
+
+    B=(); A=(); _rc=0
+    bwrap_resolve_files B A --bind-try "$HOME" 2>/dev/null || _rc=$?
+    [[ $_rc -eq 0 ]] \
+        && ok "resolve_files returns zero for a refused try bind" \
+        || fail "resolve_files returned non-zero for a refused try bind"
+    has_triple B --bind-try "$HOME" "$HOME" \
+        && fail "resolve_files (leaf, try) bound HOME" || ok "resolve_files (leaf, try) refuses HOME"
+    [[ ${#A[@]} -eq 1 && "${A[0]}" == "$HOME" ]] \
+        && ok "resolve_files keeps the refused try argument" \
+        || fail "resolve_files dropped the refused try argument"
+
+    B=(); A=()
+    bwrap_resolve_files B A --bind "$_ancestor" 2>"$WARN_ERR"
+    has_triple B --bind "$_ancestor" "$_ancestor" \
+        && fail "resolve_files (leaf) bound an ancestor of HOME" || ok "resolve_files (leaf) refuses an ancestor of HOME"
+    grep -qxF "bwrap_resolve_files: refusing to bind HOME or an ancestor for: $_ancestor" "$WARN_ERR" \
+        && ok "resolve_files (leaf) warns when refusing an ancestor" || fail "resolve_files ancestor warning absent"
+
+    B=(); A=(); _rc=0
+    bwrap_resolve_files B A --bind "${HOME}/sub" 2>/dev/null || _rc=$?
+    [[ $_rc -eq 0 ]] \
+        && ok "resolve_files returns zero when it binds a HOME descendant" \
+        || fail "resolve_files returned non-zero for a HOME descendant"
+    has_triple B --bind "${HOME}/sub" "${HOME}/sub" \
+        && ok "resolve_files (leaf) still binds a HOME descendant" || fail "resolve_files refused a HOME descendant"
+
+    B=(); A=()
+    bwrap_resolve_files B A --bind "$_sibling" 2>/dev/null
+    has_triple B --bind "$_sibling" "$_sibling" \
+        && ok "resolve_files (leaf) still binds a HOME sibling" || fail "resolve_files refused a HOME sibling"
+
+    B=(); A=(); _rc=0
+    bwrap_resolve_files B A --layout=parent --bind "$HOME" 2>"$WARN_ERR" || _rc=$?
+    [[ $_rc -ne 0 ]] \
+        && ok "resolve_files returns non-zero for a refused parent hard bind" \
+        || fail "resolve_files returned zero for a refused parent hard bind"
+    has_triple B --bind "$HOME" "$HOME" \
+        && fail "resolve_files (parent) bound HOME" || ok "resolve_files (parent) refuses HOME"
+    has_triple B --bind "$_ancestor" "$_ancestor" \
+        && fail "resolve_files (parent) bound an ancestor of HOME" \
+        || ok "resolve_files (parent) does not bind the ancestor"
+    grep -qxF "bwrap_resolve_files: refusing to bind HOME or an ancestor for: $HOME" "$WARN_ERR" \
+        && ok "resolve_files (parent) warns when refusing HOME" \
+        || fail "resolve_files parent HOME warning absent"
+
+    B=(); A=()
+    bwrap_resolve_files B A --layout=parent --bind "${HOME}/sub/file.bin" 2>/dev/null
+    has_triple B --bind "${HOME}/sub" "${HOME}/sub" \
+        && ok "resolve_files (parent) binds the containing directory for a descendant" \
+        || fail "resolve_files (parent) did not bind the containing directory for a descendant"
+
+    B=(); A=()
+    bwrap_resolve_files B A --layout=parent --bind "$_sibling" 2>/dev/null
+    has_triple B --bind "$_sibling" "$_sibling" \
+        && ok "resolve_files (parent) narrows a HOME sibling to the argument" \
+        || fail "resolve_files (parent) did not narrow a HOME sibling"
+    has_triple B --bind "$_ancestor" "$_ancestor" \
+        && fail "resolve_files (parent) bound the ancestor for a sibling" \
+        || ok "resolve_files (parent) avoids binding the ancestor for a sibling"
+
+    B=(); A=()
+    bwrap_resolve_files B A --layout=parent --bind "${HOME}/sub" 2>/dev/null
+    has_triple B --bind "${HOME}/sub" "${HOME}/sub" \
+        && ok "resolve_files (parent) falls back to a direct HOME child" \
+        || fail "resolve_files (parent) did not bind a direct HOME child"
+
+    HOME="${_base}/link"
+    ln -s "${_base}/home/user" "$HOME"
+    B=(); A=(); _rc=0
+    bwrap_resolve_files B A --bind "$HOME" 2>"$WARN_ERR" || _rc=$?
+    [[ $_rc -ne 0 ]] \
+        && ok "resolve_files returns non-zero for a refused symlinked HOME" \
+        || fail "resolve_files returned zero for a refused symlinked HOME"
+    has_triple B --bind "${_base}/home/user" "${_base}/home/user" \
+        && fail "resolve_files bound a symlinked HOME" || ok "resolve_files resolves a symlinked HOME"
+    grep -qxF "bwrap_resolve_files: refusing to bind HOME or an ancestor for: $HOME" "$WARN_ERR" \
+        && ok "resolve_files warns for a symlinked HOME" || fail "resolve_files symlinked HOME warning absent"
+
+    rm -rf "$_base"
+}
+test_resolve_files_home_guard
+
+BARG=(); BARGA=()
+bwrap_resolve_files BARG BARGA -- --bind
+[[ ${#BARGA[@]} -eq 1 && "${BARGA[0]}" == "--bind" ]] \
+    && ok "resolve_files: -- ends option parsing" || fail "resolve_files: -- did not stop parsing"
+
+LARG=(); LARGA=()
+bwrap_resolve_files LARG LARGA --bind leaf
+[[ ${#LARGA[@]} -eq 1 && "${LARGA[0]}" == "leaf" ]] \
+    && ok "resolve_files: bare 'leaf' is an argument, not a layout" || fail "resolve_files: bare 'leaf' was consumed"
+
+XARG=(); XARGA=()
+bwrap_resolve_files XARG XARGA --layout=bogus /tmp 2>/dev/null && XRC=0 || XRC=$?
+[[ $XRC -ne 0 ]] && ok "resolve_files: rejects an unknown layout" || fail "resolve_files: accepted an unknown layout"
+
+NARG=(); NARGA=()
+bwrap_resolve_files NARG NARGA --layout=parent --bind "${TMPDIR_TEST}/missing-app" 2>/dev/null
+[[ ${#NARGA[@]} -eq 1 ]] && ok "resolve_files: --layout=parent is accepted" || fail "resolve_files: --layout=parent rejected"
 
 QW=()
 BWRAP_QUIET=1 bwrap_ro_bind_dir QW "${TMPDIR_TEST}/missing-ro-dir" 2>"$WARN_ERR"

@@ -189,4 +189,11 @@ fi
 
 _passed=$(awk '/^PASS / { n++ } END { print n + 0 }' "$_tmp/out")
 _skipped=$(awk '/^SKIP / { n++ } END { print n + 0 }' "$_tmp/out")
+mapfile -t _skipped_names < <(awk '/^SKIP / { print $2 }' "$_tmp/out")
+if (( ${#_skipped_names[@]} > 0 )); then
+    echo " skipped:"
+    for _name in "${_skipped_names[@]}"; do
+        echo "  ⊘ $_name"
+    done
+fi
 echo "seccomp-check: $_passed passed, $_skipped skipped (${#_rules[@]} unique rules), including extra-rule merge"

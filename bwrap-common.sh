@@ -368,35 +368,106 @@ bwrap_themes() {
     :
 }
 
+_bwrap_is_home_or_ancestor() {
+    local _home=$1 _path=$2
+    [[ -n "$_home" && ( "$_path" == "$_home" || "$_home" == "$_path"/* ) ]]
+}
+
 # Resolve file arguments to bind mounts.
-# Usage: bwrap_resolve_files BINDS_ARRAY ARGS_ARRAY [MODE] ARG...
-# When MODE is omitted it defaults to --ro-bind.
+# Usage: bwrap_resolve_files BINDS_ARRAY ARGS_ARRAY [LAYOUT] [MODE] ARG...
+#   LAYOUT  leaf (default) mounts each argument itself; parent mounts the
+#           directory containing it (legacy behavior). Both refuse the
+#           filesystem root, HOME, and HOME's ancestors; parent falls back to
+#           the argument when the containing directory would expose them.
+#   MODE    --ro-bind (default), --bind, --dev-bind, --*-try
+#   Returns 1 when a non-try bind is refused for HOME/ancestor; -try modes
+#   still return 0.
 bwrap_resolve_files() {
     local -n _binds=$1
     local -n _args=$2
     shift 2
     local _mode="--ro-bind"
-    case "${1:-}" in
-        --ro-bind|--bind|--dev-bind|--ro-bind-try|--bind-try|--dev-bind-try)
-            _mode=$1
-            shift
-            ;;
+    local _layout="leaf"
+    while (( $# > 0 )); do
+        case "$1" in
+            --)
+                shift; break ;;
+            --layout=*)
+                _layout=${1#--layout=}; shift ;;
+            --layout)
+                shift
+                _layout=${1:-}
+                if [[ -z "$_layout" ]]; then
+                    echo "bwrap_resolve_files: --layout needs leaf or parent" >&2
+                    return 2
+                fi
+                shift ;;
+            --ro-bind|--bind|--dev-bind|--ro-bind-try|--bind-try|--dev-bind-try)
+                _mode=$1; shift ;;
+            *) break ;;
+        esac
+    done
+    case "$_layout" in
+        leaf|parent) ;;
+        *)
+            echo "bwrap_resolve_files: unknown layout: $_layout" >&2
+            return 2 ;;
     esac
-    local arg
+    # HOME can be a symlink (/home -> /var/home), while targets are resolved
+    # with realpath; compare against the physical path.
+    local _home_real=""
+    if [[ -n "${HOME:-}" ]]; then
+        _home_real="$(realpath -m -- "$HOME" 2>/dev/null)" || _home_real=""
+        [[ -n "$_home_real" ]] || _home_real=$HOME
+    fi
+    local _refused=0 arg
     for arg in "$@"; do
         if [[ "$arg" == -* ]]; then
             _args+=("$arg")
         elif [[ -e "$arg" ]]; then
             local _real _dir
             _real="$(realpath "$arg")"
-            _dir="$(dirname "$_real")"
-            case "$_dir" in
-                /usr/*|/etc/*|/proc/*|/dev/*|/tmp*|/sys/*) ;;
-                "${HOME}")
-                    _binds+=("$_mode" "$_real" "$_real")
-                    ;;
-                *) _binds+=("$_mode" "$_dir" "$_dir") ;;
-            esac
+            if [[ "$_layout" == "parent" ]]; then
+                _dir="$(dirname "$_real")"
+                case "$_dir" in
+                    /)
+                        # A depth-1 path resolves to the filesystem root; binding
+                        # it would expose the whole host root, so refuse it.
+                        _bwrap_warn "bwrap_resolve_files: refusing to bind the filesystem root for: $arg"
+                        ;;
+                    /usr|/usr/*|/etc|/etc/*|/proc|/proc/*|/dev|/dev/*|/tmp|/tmp/*|/sys|/sys/*) ;;
+                    *)
+                        if _bwrap_is_home_or_ancestor "$_home_real" "$_dir"; then
+                            if _bwrap_is_home_or_ancestor "$_home_real" "$_real"; then
+                                _bwrap_warn "bwrap_resolve_files: refusing to bind HOME or an ancestor for: $arg"
+                                _refused=1
+                            else
+                                _binds+=("$_mode" "$_real" "$_real")
+                            fi
+                        else
+                            _binds+=("$_mode" "$_dir" "$_dir")
+                        fi
+                        ;;
+                esac
+            else
+                case "$_real" in
+                    /)
+                        _bwrap_warn "bwrap_resolve_files: refusing to bind the filesystem root for: $arg"
+                        ;;
+                    /usr|/usr/*|/etc|/etc/*|/proc|/proc/*|/dev|/dev/*|/tmp|/tmp/*|/sys|/sys/*) ;;
+                    *)
+                        # Binding HOME or one of its ancestors exposes the whole
+                        # home tree (and siblings) regardless of the bind mode.
+                        # Descendants such as HOME/projects remain valid targets.
+                        if _bwrap_is_home_or_ancestor "$_home_real" "$_real"; then
+                            _bwrap_warn "bwrap_resolve_files: refusing to bind HOME or an ancestor for: $arg"
+                            _refused=1
+                        else
+                            _binds+=("$_mode" "$_real" "$_real")
+                        fi
+                        ;;
+                esac
+            fi
             _args+=("$_real")
         else
             case "$arg" in
@@ -405,6 +476,10 @@ bwrap_resolve_files() {
             _args+=("$arg")
         fi
     done
+    if (( _refused )) && [[ "$_mode" != *-try ]]; then
+        return 1
+    fi
+    return 0
 }
 
 # ── Common home tmpfs skeleton ────────────────────────────────
@@ -538,21 +613,71 @@ _bwrap_cleanup() {
     _bwrap_dbus_cleanup
     _bwrap_seccomp_close_fds
     _bwrap_seccomp_tmp_cleanup
+    _bwrap_fcitx_close_fds
 }
 
 # ── fcitx5 input method ──────────────────────────────────────
+_BWRAP_FCITX_FDS=()
+
+# fcitx5 keeps its socket directory under the caller's own name: /tmp/fcitx5-<euid>
+# when XDG_RUNTIME_DIR is unset, or $XDG_RUNTIME_DIR/fcitx5 otherwise.  These exact
+# paths are used instead of a /tmp/fcitx5-* glob so another user's entry is never
+# even considered.
+_bwrap_fcitx_paths() {
+    printf '%s\n' "/tmp/fcitx5-${EUID}"
+    if [[ -n "${XDG_RUNTIME_DIR:-}" ]]; then
+        printf '%s\n' "${XDG_RUNTIME_DIR}/fcitx5"
+    fi
+}
+
+_bwrap_fcitx_close_fds() {
+    local _fd
+    if (( ${#_BWRAP_FCITX_FDS[@]} == 0 )); then
+        return 0
+    fi
+    for _fd in "${_BWRAP_FCITX_FDS[@]}"; do
+        exec {_fd}<&- 2>/dev/null || true
+    done
+    _BWRAP_FCITX_FDS=()
+}
+
 bwrap_fcitx() {
     local -n _arr=$1
-    _arr+=(
+    local -a _out=()
+    _out+=(
         --setenv QT_IM_MODULE fcitx
         --setenv XMODIFIERS "@im=fcitx"
     )
     [[ -d "${HOME}/.config/fcitx5" ]] && \
-        _arr+=(--ro-bind "${HOME}/.config/fcitx5" "${HOME}/.config/fcitx5")
-    local sock
-    for sock in /tmp/fcitx5-*; do
-        [[ -e "$sock" ]] && _arr+=(--bind "$sock" "$sock")
+        _out+=(--ro-bind "${HOME}/.config/fcitx5" "${HOME}/.config/fcitx5")
+    local sock _fd
+    local -a _candidates=() _trusted=()
+    mapfile -t _candidates < <(_bwrap_fcitx_paths)
+    # Validate every candidate before opening anything, so a refusal leaves
+    # _arr untouched; a directory is then bound through --bind-fd so its inode
+    # cannot be swapped, and a socket (unopenable from the shell) by path.
+    for sock in "${_candidates[@]}"; do
+        [[ -S "$sock" || -d "$sock" ]] || continue
+        if [[ -L "$sock" || ! -O "$sock" ]]; then
+            echo "bwrap_fcitx: refusing untrusted path: $sock" >&2
+            return 1
+        fi
+        _trusted+=("$sock")
     done
+    for sock in "${_trusted[@]}"; do
+        if [[ -d "$sock" ]]; then
+            unset -v _fd
+            if ! exec {_fd}< "$sock"; then
+                echo "bwrap_fcitx: cannot open $sock for --bind-fd" >&2
+                return 1
+            fi
+            _BWRAP_FCITX_FDS+=("$_fd")
+            _out+=(--bind-fd "$_fd" "$sock")
+        else
+            _out+=(--bind "$sock" "$sock")
+        fi
+    done
+    _arr+=("${_out[@]}")
     :
 }
 
@@ -635,6 +760,7 @@ bwrap_exec() {
     bwrap "$@" <&0 &
     _bwrap_pid=$!
     _bwrap_seccomp_close_fds
+    _bwrap_fcitx_close_fds
 
     # shellcheck disable=SC2329
     _bwrap_on_signal() {
