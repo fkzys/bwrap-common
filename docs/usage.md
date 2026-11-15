@@ -1,12 +1,16 @@
 # bwrap-common
 
+## How to read this file
+
+<mark>(+)</mark> means something is enabled for something if user don't change it.
+
 ## Functions
 
 ### Low-level helpers
 
 | Function | Purpose |
 |---|---|
-| `bwrap_base` | Clears the inherited environment by default (`--clearenv`) and provides the system skeleton (`/usr`, `/etc`, `/proc`, `/sys`, `/dev`, `/tmp`); `$2` selects `shm=tmpfs` (default, private) or `shm=bind` (host `/dev/shm`); `$3` selects `clearenv=yes` (default) or `no` |
+| `bwrap_base` | Clears the inherited environment by default (`--clearenv`) and provides the system skeleton (`/usr`, `/etc`, `/proc`, `/sys`, `/dev`, `/tmp`); `$2` selects `shm=tmpfs`<mark>(+)</mark> or `shm=bind` (host `/dev/shm`); `$3` selects `clearenv=yes`<mark>(+)</mark> or `no` |
 | `bwrap_lib64` | `/usr/lib64` bind or symlink |
 | `bwrap_resolv` | resolv.conf symlink target for DNS |
 | `bwrap_gpu` | DRI + NVIDIA device nodes |
@@ -25,11 +29,11 @@
 | `bwrap_env_base` | `HOME`, `LANG`, `PATH`, `TERM`, `XDG_RUNTIME_DIR`, `XDG_CACHE_HOME=$HOME/.cache` |
 | `bwrap_sandbox` | `--unshare-all`, optional `--share-net` / `--new-session` |
 | `bwrap_seccomp` | Compile `seccomp/default.conf` (optionally merged with extra rules) or a syscall allowlist at runtime, then add one `--seccomp` descriptor |
-| `bwrap_resolve_files` | Resolve file arguments to bind mounts; `--layout=leaf` (default: mount each argument itself) or `--layout=parent` (mount its containing directory); `--` ends option parsing; the filesystem root is always refused, both layouts refuse `$HOME` and its ancestors (descendants stay bindable), and parent falls back to the argument when the containing directory would expose them; returns non-zero when a non-try bind is refused for `$HOME`/an ancestor, while `*-try` modes return 0 |
+| `bwrap_resolve_files` | Resolve file arguments to bind mounts; `--layout=leaf` <mark>(+)</mark>: mount each argument itself) or `--layout=parent` (mount its containing directory); `--` ends option parsing; the filesystem root is always refused, both layouts refuse `$HOME` and its ancestors (descendants stay bindable), and parent falls back to the argument when the containing directory would expose them; returns non-zero when a non-try bind is refused for `$HOME`/an ancestor, while `*-try` modes return 0 |
 | `bwrap_bind_dir` | Create state dirs on host + add `--bind` |
 | `bwrap_ro_bind_dir` | Bind pre-existing dirs read-only, skip missing |
 | `bwrap_ssh_agent` | SSH agent socket forwarding |
-| `bwrap_hardened_malloc` | Preload hardened_malloc: full `default` when omitted, or `light`; fails if the selected library is missing; `bwrap_gui_finish` enables it by default |
+| `bwrap_hardened_malloc` | Preload hardened_malloc: full `default` when omitted, or `light`; fails if the selected library is missing |
 | `bwrap_no_hardened_malloc` | Opt out of hardened_malloc by masking installed variants with an empty stub |
 | `bwrap_exec` | Run bwrap as foreground child, clean up D-Bus proxy and seccomp filter fds on exit; falls back to `exec bwrap` when no proxies are active |
 | `require_dir` | Validate that directories exist, exit on missing |
@@ -39,24 +43,24 @@
 | Function | Purpose |
 |---|---|
 | `bwrap_gui_setup` | `bwrap_base` + `lib64` + optional `gpu` + optional `resolv` + `runtime_dir` + `home_tmpfs`; optional `shm` and `clearenv` modes |
-| `bwrap_gui_finish` | `themes` + `wayland`/`x11` + D-Bus (`filtered` by default; `unfiltered`/`none` opt-out) + `env_base` + malloc (enabled by default; `malloc=no` opts out) + seccomp + `sandbox` |
+| `bwrap_gui_finish` | `themes` + `wayland`/`x11` + D-Bus + `env_base` + malloc + seccomp + `sandbox` |
 
 `bwrap_gui_setup` parameters:
 
 - `$1` — array name to append bwrap arguments to (required)
-- `$2` — network: `yes`/`no` (default `no`); `yes` adds the resolv.conf bind
-- `$3` — GPU: `yes`/`no` (default `no`); `yes` exposes the DRI/NVIDIA device nodes, `no` omits them. GPU exposure expands the attack surface, so it is opt-in.
-- `$4` — shm: `tmpfs` (default) or `bind`. `tmpfs` creates a private, empty `/dev/shm`; `bind` exposes the host `/dev/shm`, which shares POSIX shared memory with host processes and other sandboxes. Use `bind` only for applications that require host shm.
-- `$5` — clearenv: `yes` (default) or `no`. `yes` drops the inherited environment; `no` keeps it and re-exposes host secrets and loader/interpreter variables.
+- `$2` — network: `yes`<mark>(+)</mark>/`no`; `yes` adds the resolv.conf bind
+- `$3` — GPU: `yes`/`no`<mark>(+)</mark>; `yes` exposes the DRI/NVIDIA device nodes, `no` omits them. GPU exposure expands the attack surface, so it is opt-in.
+- `$4` — shm: `tmpfs`<mark>(+)</mark> or `bind`. `tmpfs` creates a private, empty `/dev/shm`; `bind` exposes the host `/dev/shm`, which shares POSIX shared memory with host processes and other sandboxes. Use `bind` only for applications that require host shm.
+- `$5` — clearenv: `yes`<mark>(+)</mark> or `no`. `yes` drops the inherited environment; `no` keeps it and re-exposes host secrets and loader/interpreter variables.
 
 `bwrap_gui_finish` parameters:
 - `$1` — array name to append bwrap arguments to
-- `$2` — display: `wayland`/`x11` (default `wayland`)
-- `$3` — network: `yes`/`no` (default `no`); `yes` adds `--share-net`
-- `$4` — malloc: `default` (default, enabled), `light`, or `no` (opt-out)
-- `$5` — D-Bus mode: `filtered` (default), `unfiltered`, `none`; `filtered` returns non-zero if `xdg-dbus-proxy` is unavailable when a bus exists (with no bus it is skipped)
-- `$6` — themes: `yes`/`no` (default `yes`)
-- `$7` — seccomp: `default`/`none` (default `default`); `default` returns non-zero if the default config or generator is unavailable; no blob is used; use `bwrap_seccomp` directly for an allowlist or `default` plus extra rules
+- `$2` — display: `wayland`<mark>(+)</mark>/`x11`
+- `$3` — network: `yes`/`no`<mark>(+)</mark>; `yes` adds `--share-net`
+- `$4` — malloc: `default`<mark>(+)</mark>, `light`, or `no`
+- `$5` — D-Bus mode: `filtered`<mark>(+)</mark>, `unfiltered`, `none`; `filtered` returns non-zero if `xdg-dbus-proxy` is unavailable when a bus exists (with no bus it is skipped)
+- `$6` — themes: `yes`<mark>(+)</mark>/`no`
+- `$7` — seccomp: `default`<mark>(+)</mark>/`none`; `default` returns non-zero if the default config or generator is unavailable; no blob is used; use `bwrap_seccomp` directly for an allowlist or `default` plus extra rules
 
 ## Resolving file arguments
 
