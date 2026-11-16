@@ -433,3 +433,22 @@ else
     fail "seccomp refresh (flat=$RC14_FLAT/$GOT14_FLAT, bundled=$RC14_BUNDLED/$GOT14_BUNDLED, want=$SECCOMP_SIZE14)"
 fi
 
+# Test 15: a gui_finish marker stays with its array and cannot arm another exec
+ARGS_FILE15="${TMPDIR_TEST}/args15"
+unset FAKE_BWRAP_ARGS_FILE FAKE_BWRAP_STDIN_FILE FAKE_BWRAP_EXIT FAKE_CLEANUP_FILE
+unset FAKE_BWRAP_ARGS_FD_PATH_FILE FAKE_BWRAP_CMDLINE_FILE
+export FAKE_BWRAP_ARGS_FILE="$ARGS_FILE15"
+export FAKE_BWRAP_EXIT=0
+GUI_LEAK=()
+bwrap_gui_finish GUI_LEAK wayland no no unfiltered no none >/dev/null 2>&1
+GUI_LEAK_RC=$?
+run_bwrap_exec --test < /dev/null
+RC15=$?
+GOT15=()
+read_args "$ARGS_FILE15" GOT15
+EXPECTED15=( --test )
+if [[ $GUI_LEAK_RC -eq 0 && $RC15 -eq 0 ]] && arrays_equal GOT15 EXPECTED15; then
+    ok "gui_finish bundled marker does not arm an unrelated bwrap_exec"
+else
+    fail "gui_finish marker leaked to another exec (gui=$GUI_LEAK_RC, rc=$RC15)"
+fi

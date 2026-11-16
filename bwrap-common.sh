@@ -752,17 +752,43 @@ bwrap_gui_finish() {
         *) echo "bwrap_gui_finish: seccomp must be 'default' or 'none' (call bwrap_seccomp directly for an allowlist)" >&2; return 1 ;;
     esac
     bwrap_sandbox "$_v" "$_net" || return 1
+    local _marker_seen
+    _bwrap_bundled_strip "$_v" _marker_seen
     if [[ "$_bundled" == "yes" ]]; then
-        # shellcheck disable=SC2119
-        bwrap_exec_bundled
-    else
-        _BWRAP_EXEC_BUNDLED=0
+        local -n _bwrap_gui_v=$_v
+        _bwrap_gui_v+=(--unsetenv "$_BWRAP_BUNDLED_MARKER")
     fi
+    return 0
 }
 
 # ── bundled arguments ───────────────────────────────────────
+# Private, array-scoped marker; the --unsetenv pair is a no-op for bwrap.
+_BWRAP_BUNDLED_MARKER='__BWRAP_COMMON_BUNDLED__'
 _BWRAP_ARGS_FDS=()
 _BWRAP_EXEC_BUNDLED=0
+
+_bwrap_bundled_strip() {
+    local -n _bwrap_bundled_arr=$1
+    local -n _bwrap_bundled_found=$2
+    local -a _out=()
+    local _i=0 _arg _seen_sep=0
+
+    _bwrap_bundled_found=0
+    while (( _i < ${#_bwrap_bundled_arr[@]} )); do
+        _arg=${_bwrap_bundled_arr[_i]}
+        if (( !_seen_sep )) &&
+           [[ "$_arg" == "--unsetenv" ]] &&
+           [[ "${_bwrap_bundled_arr[_i+1]:-}" == "$_BWRAP_BUNDLED_MARKER" ]]; then
+            _bwrap_bundled_found=1
+            _i=$((_i + 2))
+            continue
+        fi
+        [[ "$_arg" == "--" ]] && _seen_sep=1
+        _out+=("$_arg")
+        _i=$((_i + 1))
+    done
+    _bwrap_bundled_arr=("${_out[@]}")
+}
 
 _bwrap_args_close_fds() {
     local _fd
@@ -775,10 +801,9 @@ _bwrap_args_close_fds() {
     _BWRAP_ARGS_FDS=()
 }
 
-# Internal: write an options array to an unlinked, private file descriptor.
-# Sets the variable named by $2 to the read descriptor, or "" when the array is
-# empty.  The file is unlinked before any data is written, so the options never
-# acquire a persistent pathname.
+# Internal: write an options array to a private file descriptor.  The file is
+# created with mode 0600 under umask 077 and unlinked before writing; a short
+# pathname window exists between mktemp and unlink.
 _bwrap_args_open() {
     local _name=$1
     local -n _bwrap_args_src=$_name
@@ -828,8 +853,7 @@ _bwrap_args_open() {
 }
 
 # Internal: run bwrap, either via exec or as a foreground child when proxies
-# are active.  Keeping the original seccomp descriptors open lets a later run
-# refresh them instead of reading an exhausted filter.
+# are active.
 _bwrap_run() {
     if [[ ${#_BWRAP_DBUS_PROXY_PIDS[@]} -eq 0 ]]; then
         exec bwrap "$@"
@@ -861,25 +885,22 @@ _bwrap_run() {
     exit "$_rc"
 }
 
-# Switch the next bwrap_exec call to --args mode.  Call it immediately before
-# bwrap_exec; this function only sets a one-shot flag.
-# shellcheck disable=SC2120
+# Arm the next bwrap_exec for --args; this function does not execute bwrap.
 bwrap_exec_bundled() {
-    if (( $# > 0 )); then
-        echo "bwrap_exec_bundled: takes no arguments; call bwrap_exec next" >&2
-        return 2
-    fi
     _BWRAP_EXEC_BUNDLED=1
-    return 0
 }
 
-# Run bwrap as foreground child, clean up proxies on exit.
-# bwrap_exec_bundled before this call selects --args for the options.
+# Run bwrap as foreground child, clean up proxies on exit.  An array marker
+# from bwrap_gui_finish or the explicit bwrap_exec_bundled switch selects --args.
 bwrap_exec() {
-    local _bundle=${_BWRAP_EXEC_BUNDLED:-0}
+    local _bundle=0
+    local -a _args=("$@")
+    _bwrap_bundled_strip _args _bundle
+    if (( ${_BWRAP_EXEC_BUNDLED:-0} )); then
+        _bundle=1
+    fi
     _BWRAP_EXEC_BUNDLED=0
 
-    local -a _args=("$@")
     local _limit=${#_args[@]} _i
     for (( _i = 0; _i < ${#_args[@]}; _i++ )); do
         if [[ "${_args[_i]}" == "--" ]]; then
@@ -893,6 +914,7 @@ bwrap_exec() {
         return 1
     fi
 
+    local -a _run_args
     if (( _bundle )); then
         if (( _limit == ${#_args[@]} )); then
             _bwrap_seccomp_close_refresh_fds
@@ -907,11 +929,16 @@ bwrap_exec() {
             return 1
         fi
         if [[ -n "$_fd" ]]; then
-            _bwrap_run --args "$_fd" -- "${_cmd[@]}"
+            _run_args=(--args "$_fd" -- "${_cmd[@]}")
         else
-            _bwrap_run -- "${_cmd[@]}"
+            _run_args=(-- "${_cmd[@]}")
         fi
     else
-        _bwrap_run "${_args[@]}"
+        _run_args=("${_args[@]}")
     fi
+
+    if (( ${#_BWRAP_SECCOMP_REFRESH_FDS[@]} > 0 )); then
+        _bwrap_seccomp_close_fds
+    fi
+    _bwrap_run "${_run_args[@]}"
 }
