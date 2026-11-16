@@ -35,7 +35,8 @@
 | `bwrap_ssh_agent` | SSH agent socket forwarding |
 | `bwrap_hardened_malloc` | Preload hardened_malloc: full `default` when omitted, or `light`; fails if the selected library is missing |
 | `bwrap_no_hardened_malloc` | Opt out of hardened_malloc by masking installed variants with an empty stub |
-| `bwrap_exec` | Run bwrap as foreground child, clean up D-Bus proxy and seccomp filter fds on exit; falls back to `exec bwrap` when no proxies are active |
+| `bwrap_exec` | Run bwrap as foreground child, clean up D-Bus proxy and seccomp filter fds on exit; by default passes a flat argv; after `bwrap_exec_bundled`, the next call uses `--args` and requires `--` before the command |
+| `bwrap_exec_bundled` | One-shot switch: call immediately before `bwrap_exec`; writes options before `--` through `--args` on an unlinked private fd, keeping option values such as `--setenv` out of `/proc/<pid>/cmdline`; the command and its arguments remain visible |
 | `require_dir` | Validate that directories exist, exit on missing |
 
 ### High-level composites
@@ -43,7 +44,7 @@
 | Function | Purpose |
 |---|---|
 | `bwrap_gui_setup` | `bwrap_base` + `lib64` + optional `gpu` + optional `resolv` + `runtime_dir` + `home_tmpfs`; optional `shm` and `clearenv` modes |
-| `bwrap_gui_finish` | `themes` + `wayland`/`x11` + D-Bus + `env_base` + malloc + seccomp + `sandbox` |
+| `bwrap_gui_finish` | `themes` + `wayland`/`x11` + D-Bus + `env_base` + malloc + seccomp + `sandbox`; bundled mode for the next `bwrap_exec` |
 
 `bwrap_gui_setup` parameters:
 
@@ -61,6 +62,7 @@
 - `$5` — D-Bus mode: `filtered`<mark>(+)</mark>, `unfiltered`, `none`; `filtered` returns non-zero if `xdg-dbus-proxy` is unavailable when a bus exists (with no bus it is skipped)
 - `$6` — themes: `yes`<mark>(+)</mark>/`no`
 - `$7` — seccomp: `default`<mark>(+)</mark>/`none`; `default` returns non-zero if the default config or generator is unavailable; no blob is used; use `bwrap_seccomp` directly for an allowlist or `default` plus extra rules
+- `$8` — bundled: `yes`<mark>(+)</mark>/`no`; `yes` arms the next `bwrap_exec` for `--args`, `no` keeps the flat argv
 
 ## Resolving file arguments
 

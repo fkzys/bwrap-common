@@ -153,6 +153,35 @@ bwrap_gui_finish R wayland no no unfiltered
 [[ ${#R[@]} -gt 0 ]]      && ok "produces non-empty array"   || fail "empty array"
 has_arg R "--unshare-all"  && ok "--unshare-all present"      || fail "--unshare-all missing"
 
+_BWRAP_EXEC_BUNDLED=0
+GB=()
+bwrap_gui_finish GB wayland no no unfiltered no none
+GB_RC=$?
+if [[ $GB_RC -eq 0 && $_BWRAP_EXEC_BUNDLED -eq 1 ]]; then
+    ok "gui_finish arms bundled mode by default"
+else
+    fail "gui_finish default bundled mode (rc=$GB_RC, bundled=${_BWRAP_EXEC_BUNDLED:-unset})"
+fi
+
+_BWRAP_EXEC_BUNDLED=1
+GF=()
+bwrap_gui_finish GF wayland no no unfiltered no none no
+GF_RC=$?
+if [[ $GF_RC -eq 0 && $_BWRAP_EXEC_BUNDLED -eq 0 ]]; then
+    ok "gui_finish bundled=no keeps flat mode"
+else
+    fail "gui_finish bundled=no (rc=$GF_RC, bundled=${_BWRAP_EXEC_BUNDLED:-unset})"
+fi
+
+GX=()
+bwrap_gui_finish GX wayland no no unfiltered no none maybe 2>/dev/null
+GX_RC=$?
+if [[ $GX_RC -eq 1 && $_BWRAP_EXEC_BUNDLED -eq 0 ]]; then
+    ok "gui_finish rejects an invalid bundled mode"
+else
+    fail "gui_finish invalid bundled mode (rc=$GX_RC)"
+fi
+
 CLEAR_GUI=()
 bwrap_base CLEAR_GUI
 bwrap_gui_finish CLEAR_GUI wayland no no unfiltered no none

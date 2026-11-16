@@ -611,9 +611,11 @@ _bwrap_install_cleanup() {
 # Internal: run pending cleanup: D-Bus proxies, seccomp descriptors, temp files.
 _bwrap_cleanup() {
     _bwrap_dbus_cleanup
+    _bwrap_seccomp_close_refresh_fds
     _bwrap_seccomp_close_fds
     _bwrap_seccomp_tmp_cleanup
     _bwrap_fcitx_close_fds
+    _bwrap_args_close_fds
 }
 
 # ── fcitx5 input method ──────────────────────────────────────
@@ -721,8 +723,13 @@ bwrap_gui_setup() {
 # $5 = dbus mode: "filtered", "unfiltered", or "none"
 # $6 = themes: "yes" or "no"
 # $7 = seccomp: "default" or "none"
+# $8 = bundled: "yes" or "no"
 bwrap_gui_finish() {
-    local _v=$1 _display="${2:-wayland}" _net="${3:-no}" _malloc="${4:-default}" _dbus="${5:-filtered}" _themes="${6:-yes}" _seccomp="${7:-default}"
+    local _v=$1 _display="${2:-wayland}" _net="${3:-no}" _malloc="${4:-default}" _dbus="${5:-filtered}" _themes="${6:-yes}" _seccomp="${7:-default}" _bundled="${8:-yes}"
+    case "$_bundled" in
+        yes|no) ;;
+        *) echo "bwrap_gui_finish: bundled must be 'yes' or 'no'" >&2; return 1 ;;
+    esac
     [[ "$_themes" == "yes" ]] && bwrap_themes "$_v"
     if [[ "$_display" == "x11" ]]; then
         bwrap_x11 "$_v"
@@ -744,11 +751,86 @@ bwrap_gui_finish() {
         default|none) bwrap_seccomp "$_v" "$_seccomp" || return 1 ;;
         *) echo "bwrap_gui_finish: seccomp must be 'default' or 'none' (call bwrap_seccomp directly for an allowlist)" >&2; return 1 ;;
     esac
-    bwrap_sandbox "$_v" "$_net"
+    bwrap_sandbox "$_v" "$_net" || return 1
+    if [[ "$_bundled" == "yes" ]]; then
+        # shellcheck disable=SC2119
+        bwrap_exec_bundled
+    else
+        _BWRAP_EXEC_BUNDLED=0
+    fi
 }
 
-# Run bwrap as foreground child, clean up proxies on exit.
-bwrap_exec() {
+# ── bundled arguments ───────────────────────────────────────
+_BWRAP_ARGS_FDS=()
+_BWRAP_EXEC_BUNDLED=0
+
+_bwrap_args_close_fds() {
+    local _fd
+    if (( ${#_BWRAP_ARGS_FDS[@]} == 0 )); then
+        return 0
+    fi
+    for _fd in "${_BWRAP_ARGS_FDS[@]}"; do
+        exec {_fd}<&- 2>/dev/null || true
+    done
+    _BWRAP_ARGS_FDS=()
+}
+
+# Internal: write an options array to an unlinked, private file descriptor.
+# Sets the variable named by $2 to the read descriptor, or "" when the array is
+# empty.  The file is unlinked before any data is written, so the options never
+# acquire a persistent pathname.
+_bwrap_args_open() {
+    local _name=$1
+    local -n _bwrap_args_src=$_name
+    local -n _bwrap_args_dst=$2
+    local _dir _file _wfd _rfd
+
+    _bwrap_args_dst=""
+    if (( ${#_bwrap_args_src[@]} == 0 )); then
+        return 0
+    fi
+
+    for _dir in "${XDG_RUNTIME_DIR:-}" "${TMPDIR:-/tmp}"; do
+        [[ -n "$_dir" && -d "$_dir" && -w "$_dir" ]] || continue
+        _file=$(
+            umask 077
+            mktemp -- "${_dir%/}/bwrap-args.XXXXXX" 2>/dev/null
+        ) || continue
+
+        if ! exec {_wfd}<>"$_file"; then
+            rm -f -- "$_file"
+            continue
+        fi
+        if ! exec {_rfd}<"$_file"; then
+            exec {_wfd}>&-
+            rm -f -- "$_file"
+            continue
+        fi
+        # Unlink before writing: a crash or kill then leaves no readable path.
+        if ! rm -f -- "$_file"; then
+            exec {_wfd}>&- {_rfd}<&-
+            continue
+        fi
+        if ! printf '%s\0' "${_bwrap_args_src[@]}" >&$_wfd; then
+            exec {_wfd}>&- {_rfd}<&-
+            continue
+        fi
+
+        exec {_wfd}>&-
+        _BWRAP_ARGS_FDS+=("$_rfd")
+        _bwrap_install_cleanup
+        _bwrap_args_dst=$_rfd
+        return 0
+    done
+
+    echo "bwrap_exec: cannot create a private arguments file" >&2
+    return 1
+}
+
+# Internal: run bwrap, either via exec or as a foreground child when proxies
+# are active.  Keeping the original seccomp descriptors open lets a later run
+# refresh them instead of reading an exhausted filter.
+_bwrap_run() {
     if [[ ${#_BWRAP_DBUS_PROXY_PIDS[@]} -eq 0 ]]; then
         exec bwrap "$@"
     fi
@@ -759,8 +841,9 @@ bwrap_exec() {
 
     bwrap "$@" <&0 &
     _bwrap_pid=$!
-    _bwrap_seccomp_close_fds
+    _bwrap_seccomp_close_refresh_fds
     _bwrap_fcitx_close_fds
+    _bwrap_args_close_fds
 
     # shellcheck disable=SC2329
     _bwrap_on_signal() {
@@ -776,4 +859,59 @@ bwrap_exec() {
     # Exit through _bwrap_exit_trap so cleanup and the caller's original
     # EXIT trap both run, with the bwrap status preserved.
     exit "$_rc"
+}
+
+# Switch the next bwrap_exec call to --args mode.  Call it immediately before
+# bwrap_exec; this function only sets a one-shot flag.
+# shellcheck disable=SC2120
+bwrap_exec_bundled() {
+    if (( $# > 0 )); then
+        echo "bwrap_exec_bundled: takes no arguments; call bwrap_exec next" >&2
+        return 2
+    fi
+    _BWRAP_EXEC_BUNDLED=1
+    return 0
+}
+
+# Run bwrap as foreground child, clean up proxies on exit.
+# bwrap_exec_bundled before this call selects --args for the options.
+bwrap_exec() {
+    local _bundle=${_BWRAP_EXEC_BUNDLED:-0}
+    _BWRAP_EXEC_BUNDLED=0
+
+    local -a _args=("$@")
+    local _limit=${#_args[@]} _i
+    for (( _i = 0; _i < ${#_args[@]}; _i++ )); do
+        if [[ "${_args[_i]}" == "--" ]]; then
+            _limit=$_i
+            break
+        fi
+    done
+
+    if ! _bwrap_seccomp_refresh_array _args "$_limit"; then
+        _bwrap_seccomp_close_refresh_fds
+        return 1
+    fi
+
+    if (( _bundle )); then
+        if (( _limit == ${#_args[@]} )); then
+            _bwrap_seccomp_close_refresh_fds
+            echo "bwrap_exec: bundled mode requires -- before the command" >&2
+            return 2
+        fi
+        local -a _opts=("${_args[@]:0:_limit}")
+        local -a _cmd=("${_args[@]:_limit+1}")
+        local _fd
+        if ! _bwrap_args_open _opts _fd; then
+            _bwrap_seccomp_close_refresh_fds
+            return 1
+        fi
+        if [[ -n "$_fd" ]]; then
+            _bwrap_run --args "$_fd" -- "${_cmd[@]}"
+        else
+            _bwrap_run -- "${_cmd[@]}"
+        fi
+    else
+        _bwrap_run "${_args[@]}"
+    fi
 }
