@@ -153,6 +153,37 @@ bwrap_gui_finish R wayland no no unfiltered
 [[ ${#R[@]} -gt 0 ]]      && ok "produces non-empty array"   || fail "empty array"
 has_arg R "--unshare-all"  && ok "--unshare-all present"      || fail "--unshare-all missing"
 
+GB=()
+bwrap_gui_finish GB wayland no no unfiltered no none
+GB_RC=$?
+if [[ $GB_RC -eq 0 && "${GB[-2]}" == "--unsetenv" && "${GB[-1]}" == "$_BWRAP_BUNDLED_MARKER" ]]; then
+    ok "gui_finish marks its array for bundled mode by default"
+else
+    fail "gui_finish default bundled marker (rc=$GB_RC, tail=${GB[-2]:-unset} ${GB[-1]:-unset})"
+fi
+
+GF=(--unsetenv "$_BWRAP_BUNDLED_MARKER")
+bwrap_gui_finish GF wayland no no unfiltered no none no
+GF_RC=$?
+GF_HAS_MARKER=0
+for _gf_arg in "${GF[@]}"; do
+    [[ "$_gf_arg" == "$_BWRAP_BUNDLED_MARKER" ]] && GF_HAS_MARKER=1
+done
+if [[ $GF_RC -eq 0 && $GF_HAS_MARKER -eq 0 ]]; then
+    ok "gui_finish bundled=no leaves a flat array"
+else
+    fail "gui_finish bundled=no (rc=$GF_RC, marker=$GF_HAS_MARKER)"
+fi
+
+GX=()
+bwrap_gui_finish GX wayland no no unfiltered no none maybe 2>/dev/null
+GX_RC=$?
+if [[ $GX_RC -eq 1 ]]; then
+    ok "gui_finish rejects an invalid bundled mode"
+else
+    fail "gui_finish invalid bundled mode (rc=$GX_RC)"
+fi
+
 CLEAR_GUI=()
 bwrap_base CLEAR_GUI
 bwrap_gui_finish CLEAR_GUI wayland no no unfiltered no none

@@ -48,7 +48,7 @@ FUNCTIONS=(
     bwrap_sandbox bwrap_seccomp bwrap_ssh_agent
     bwrap_resolve_files
     bwrap_gui_setup bwrap_gui_finish
-    bwrap_exec
+    bwrap_exec bwrap_exec_bundled
     require_dir
 )
 

@@ -91,7 +91,7 @@ bwrap_gui_setup A yes yes tmpfs                              # network, gpu, shm
 bwrap_bind_dir A "${HOME}/.config/app" "${HOME}/Data"
 bwrap_ro_bind_dir A "${MEDIA_DIR}"
 bwrap_audio A
-bwrap_gui_finish A wayland yes default filtered yes default  # display, network, malloc, dbus, themes, seccomp
+bwrap_gui_finish A wayland yes default filtered yes default yes  # display, network, malloc, dbus, themes, seccomp, exec_bundled
 bwrap_exec "${A[@]}" -- /usr/bin/app "$@"
 ```
 
@@ -115,6 +115,7 @@ bwrap_env_base A
 bwrap_hardened_malloc A default
 bwrap_seccomp A default
 bwrap_sandbox A yes yes                                      # yes=net, yes=new-session
+bwrap_exec_bundled
 bwrap_exec "${A[@]}" -- /usr/bin/app "$@"
 ```
 
