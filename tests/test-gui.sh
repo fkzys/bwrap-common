@@ -1,3 +1,11 @@
+# Copyright (C) 2026 fkzys <fkzys@proton.me>
+#                    https://github.com/fkzys/bwrap-common
+#
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 # ── bwrap_gui_setup ─────────────────────────────────────────
 
 section "bwrap_gui_setup"
@@ -153,6 +161,37 @@ bwrap_gui_finish R wayland no no unfiltered
 [[ ${#R[@]} -gt 0 ]]      && ok "produces non-empty array"   || fail "empty array"
 has_arg R "--unshare-all"  && ok "--unshare-all present"      || fail "--unshare-all missing"
 
+GB=()
+bwrap_gui_finish GB wayland no no unfiltered no none
+GB_RC=$?
+if [[ $GB_RC -eq 0 && "${GB[-2]}" == "--unsetenv" && "${GB[-1]}" == "$_BWRAP_BUNDLED_MARKER" ]]; then
+    ok "gui_finish marks its array for bundled mode by default"
+else
+    fail "gui_finish default bundled marker (rc=$GB_RC, tail=${GB[-2]:-unset} ${GB[-1]:-unset})"
+fi
+
+GF=(--unsetenv "$_BWRAP_BUNDLED_MARKER")
+bwrap_gui_finish GF wayland no no unfiltered no none no
+GF_RC=$?
+GF_HAS_MARKER=0
+for _gf_arg in "${GF[@]}"; do
+    [[ "$_gf_arg" == "$_BWRAP_BUNDLED_MARKER" ]] && GF_HAS_MARKER=1
+done
+if [[ $GF_RC -eq 0 && $GF_HAS_MARKER -eq 0 ]]; then
+    ok "gui_finish bundled=no leaves a flat array"
+else
+    fail "gui_finish bundled=no (rc=$GF_RC, marker=$GF_HAS_MARKER)"
+fi
+
+GX=()
+bwrap_gui_finish GX wayland no no unfiltered no none maybe 2>/dev/null
+GX_RC=$?
+if [[ $GX_RC -eq 1 ]]; then
+    ok "gui_finish rejects an invalid bundled mode"
+else
+    fail "gui_finish invalid bundled mode (rc=$GX_RC)"
+fi
+
 CLEAR_GUI=()
 bwrap_base CLEAR_GUI
 bwrap_gui_finish CLEAR_GUI wayland no no unfiltered no none
@@ -247,4 +286,3 @@ BWRAP_SECCOMP_DIR="${TMPDIR_TEST}/missing" bwrap_gui_finish SOM wayland no no un
 SOM_RC=$?
 [[ $SOM_RC -eq 0 ]] && ok "seccomp=none ignores a missing config" || fail "seccomp=none returned $SOM_RC"
 has_arg SOM "--seccomp" && fail "seccomp=none appended --seccomp" || ok "seccomp=none appends nothing when the config is missing"
-

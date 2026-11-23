@@ -1,9 +1,17 @@
 #!/usr/bin/env bash
 # bwrap-common: seccomp filter internals.
 # Loaded by bwrap-common.sh; do not source directly.
+#
+# Copyright (C) 2026 fkzys <fkzys@proton.me>
+#                    https://github.com/fkzys/bwrap-common
+#
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-# ── seccomp filters ─────────────────────────────────────────
 _BWRAP_SECCOMP_FDS=()
+_BWRAP_SECCOMP_REFRESH_FDS=()
 _BWRAP_SECCOMP_TMP_FILES=()
 declare -gA _BWRAP_SECCOMP_WARNED_CACHES=()
 
@@ -56,6 +64,56 @@ _bwrap_seccomp_close_fds() {
         exec {_fd}<&- 2>/dev/null || true
     done
     _BWRAP_SECCOMP_FDS=()
+}
+
+# Close the per-run filter copies opened by _bwrap_seccomp_refresh_array.
+_bwrap_seccomp_close_refresh_fds() {
+    local _fd
+    if (( ${#_BWRAP_SECCOMP_REFRESH_FDS[@]} == 0 )); then
+        return 0
+    fi
+    for _fd in "${_BWRAP_SECCOMP_REFRESH_FDS[@]}"; do
+        exec {_fd}<&- 2>/dev/null || true
+    done
+    _BWRAP_SECCOMP_REFRESH_FDS=()
+}
+
+# bwrap reads a --seccomp descriptor to EOF, so reusing the same array in a
+# second run would hand it an empty filter.  Reopen every descriptor that
+# bwrap_seccomp opened through /proc/self/fd: that creates a fresh file
+# description with offset 0, while keeping the original descriptor available
+# for the next run.  LIMIT bounds the scan to the options part of the array.
+_bwrap_seccomp_refresh_array() {
+    local -n _arr=$1
+    local _limit=${2:-${#_arr[@]}}
+    local _i _fd _known_fd _new_fd _known
+    (( ${#_BWRAP_SECCOMP_FDS[@]} > 0 )) || return 0
+    (( _limit <= ${#_arr[@]} )) || _limit=${#_arr[@]}
+
+    for (( _i = 0; _i < _limit; _i++ )); do
+        [[ "${_arr[_i]}" == "--seccomp" ]] || continue
+        if (( _i + 1 >= _limit )); then
+            _bwrap_seccomp_fail "missing descriptor after --seccomp"
+            return 1
+        fi
+        _fd=${_arr[_i + 1]}
+        _known=0
+        for _known_fd in "${_BWRAP_SECCOMP_FDS[@]}"; do
+            if [[ "$_known_fd" == "$_fd" ]]; then
+                _known=1
+                break
+            fi
+        done
+        (( _known )) || continue
+        if ! exec {_new_fd}< "/proc/self/fd/$_fd"; then
+            _bwrap_seccomp_fail "cannot refresh seccomp descriptor $_fd"
+            return 1
+        fi
+        _arr[_i + 1]=$_new_fd
+        _BWRAP_SECCOMP_REFRESH_FDS+=("$_new_fd")
+        _bwrap_install_cleanup
+    done
+    return 0
 }
 
 _bwrap_seccomp_tmp_add() {

@@ -1,3 +1,11 @@
+# Copyright (C) 2026 fkzys <fkzys@proton.me>
+#                    https://github.com/fkzys/bwrap-common
+#
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 # ── bwrap_seccomp ───────────────────────────────────────────
 
 section "bwrap_seccomp"
@@ -435,4 +443,3 @@ SU_RC=$?
     || fail "unknown architecture returned $SU_RC"
 
 unset BWRAP_SECCOMP_GEN FAKE_GEN_COUNTER FAKE_GEN_BLOB
-

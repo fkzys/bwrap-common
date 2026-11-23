@@ -6,6 +6,14 @@
 # SKIP using the generator's dedicated exit status, not by matching stderr
 # text.  Run this script natively on the target architecture to check its
 # native entry.
+#
+# Copyright (C) 2026 fkzys <fkzys@proton.me>
+#                    https://github.com/fkzys/bwrap-common
+#
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 set -euo pipefail
 
