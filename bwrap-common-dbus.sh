@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
 # bwrap-common: filtered D-Bus proxy internals.
 # Loaded by bwrap-common.sh; do not source directly.
-
-# ══════════════════════════════════════════════════════════════
-# ── D-Bus filtered proxy ─────────────────────────────────────
-# ══════════════════════════════════════════════════════════════
+#
+# Copyright (C) 2026 fkzys <fkzys@proton.me>
+#                    https://github.com/fkzys/bwrap-common
+#
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 _BWRAP_DBUS_PROXY_PIDS=()
 _BWRAP_DBUS_PROXY_SOCKETS=()
@@ -22,14 +26,12 @@ _bwrap_dbus_cleanup() {
     _BWRAP_DBUS_PROXY_SOCKETS=()
 }
 
-# XDG portals
 _dbus_portal_rules() {
     local -n _pr=$1
     _pr+=(--talk=org.freedesktop.portal.Desktop)
     _pr+=(--talk=org.freedesktop.portal.Documents)
 }
 
-# Common GUI services
 _dbus_gui_service_rules() {
     local -n _gr=$1
     _gr+=(--talk=org.freedesktop.Notifications)

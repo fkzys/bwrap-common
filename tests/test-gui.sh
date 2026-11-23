@@ -1,3 +1,11 @@
+# Copyright (C) 2026 fkzys <fkzys@proton.me>
+#                    https://github.com/fkzys/bwrap-common
+#
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 # ── bwrap_gui_setup ─────────────────────────────────────────
 
 section "bwrap_gui_setup"
@@ -278,4 +286,3 @@ BWRAP_SECCOMP_DIR="${TMPDIR_TEST}/missing" bwrap_gui_finish SOM wayland no no un
 SOM_RC=$?
 [[ $SOM_RC -eq 0 ]] && ok "seccomp=none ignores a missing config" || fail "seccomp=none returned $SOM_RC"
 has_arg SOM "--seccomp" && fail "seccomp=none appended --seccomp" || ok "seccomp=none appends nothing when the config is missing"
-

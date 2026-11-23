@@ -1,3 +1,11 @@
+# Copyright (C) 2026 fkzys <fkzys@proton.me>
+#                    https://github.com/fkzys/bwrap-common
+#
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 # ── bwrap_dbus_system ───────────────────────────────────────
 
 section "bwrap_dbus_system"
@@ -233,5 +241,3 @@ else
         fail "bare --call did not fail via early proxy exit: $(tr '\n' ' ' < "$RP_BAD_ERR")"
     fi
 fi
-
-

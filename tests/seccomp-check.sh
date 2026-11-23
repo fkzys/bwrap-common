@@ -10,6 +10,14 @@
 # Exit status: 0 = all rules verified, 1 = a rule failed or was not exercised,
 # 2 = the default filter was not active, 77 = the sandbox environment is
 # unavailable (e.g. unprivileged user namespaces are disabled).
+#
+# Copyright (C) 2026 fkzys <fkzys@proton.me>
+#                    https://github.com/fkzys/bwrap-common
+#
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 set -euo pipefail
 

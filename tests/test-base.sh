@@ -1,3 +1,11 @@
+# Copyright (C) 2026 fkzys <fkzys@proton.me>
+#                    https://github.com/fkzys/bwrap-common
+#
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 # ── Guard re-source ─────────────────────────────────────────
 
 section "Source guard"
@@ -607,5 +615,3 @@ bwrap_resolve_files NARG NARGA --layout=parent --bind "${TMPDIR_TEST}/missing-ap
 QW=()
 BWRAP_QUIET=1 bwrap_ro_bind_dir QW "${TMPDIR_TEST}/missing-ro-dir" 2>"$WARN_ERR"
 [[ ! -s "$WARN_ERR" ]] && ok "BWRAP_QUIET silences warnings" || fail "BWRAP_QUIET did not silence the warning"
-
-

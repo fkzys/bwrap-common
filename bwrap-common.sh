@@ -7,6 +7,14 @@
 # Source with verify-lib (recommended):
 #   _src() { local p; p=$(verify-lib "$1" "$2") && . "$p" || exit 1; }
 #   _src /usr/lib/bwrap-common/bwrap-common.sh /usr/lib/bwrap-common/
+#
+# Copyright (C) 2026 fkzys <fkzys@proton.me>
+#                    https://github.com/fkzys/bwrap-common
+#
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 VERSION="1.1.0"
 
@@ -44,7 +52,7 @@ unset -v _bwrap_common_dir _bwrap_module
 
 _BWRAP_COMMON_LOADED=1
 
-# ── Validation ───────────────────────────────────────────────
+# Validation
 require_dir() {
     local _d
     for _d in "$@"; do
@@ -66,7 +74,6 @@ _bwrap_clearenv_valid() {
     esac
 }
 
-# ── Common base bwrap args ────────────────────────────────────
 # $2 = shm mode: "tmpfs" or "bind"
 # $3 = clear environment: "yes" or "no"
 # Default clears inherited environment so only explicit --setenv entries survive.
@@ -104,7 +111,6 @@ bwrap_base() {
     _arr+=(--ro-bind /etc /etc)
 }
 
-# ── GPU + NVIDIA ──────────────────────────────────────────────
 bwrap_gpu() {
     local -n _arr=$1
     local _found=0 dev
@@ -117,7 +123,6 @@ bwrap_gpu() {
     :
 }
 
-# ── /usr/lib64 + symlinks ─────────────────────────────────────
 bwrap_lib64() {
     local -n _arr=$1
     if [[ -d /usr/lib64 && ! -L /usr/lib64 ]]; then
@@ -127,7 +132,7 @@ bwrap_lib64() {
     fi
 }
 
-# ── resolv.conf (often symlink into /run) ─────────────────────
+# Often symlink into /run
 bwrap_resolv() {
     local -n _arr=$1
     [[ -L /etc/resolv.conf ]] || return 0
@@ -144,7 +149,7 @@ bwrap_resolv() {
     fi
 }
 
-# ── Wayland (native, connect() needs write) ───────────────────
+# Connect() needs write
 bwrap_wayland() {
     local -n _arr=$1
     local _wl="${XDG_RUNTIME_DIR}/${WAYLAND_DISPLAY:-wayland-1}"
@@ -159,7 +164,6 @@ bwrap_wayland() {
     fi
 }
 
-# ── X11 / XWayland ────────────────────────────────────────────
 bwrap_x11() {
     local -n _arr=$1
     if [[ -z "${DISPLAY:-}" ]]; then
@@ -180,7 +184,6 @@ bwrap_x11() {
     fi
 }
 
-# ── Audio (PipeWire + PulseAudio) ─────────────────────────────
 bwrap_audio() {
     local -n _arr=$1
     local _found=0
@@ -196,7 +199,7 @@ bwrap_audio() {
     :
 }
 
-# ── unfiltered D-Bus session ──────────────────────────────────
+# Unfiltered
 bwrap_dbus_session() {
     local -n _arr=$1
     local _bus="${DBUS_SESSION_BUS_ADDRESS:-}"
@@ -220,7 +223,6 @@ bwrap_dbus_session() {
     fi
 }
 
-# ── system D-Bus ──────────────────────────────────────────────
 bwrap_dbus_system() {
     local -n _arr=$1
     if [[ -S /run/dbus/system_bus_socket ]]; then
@@ -234,7 +236,7 @@ bwrap_dbus_system() {
     fi
 }
 
-# ── filtered D-Bus proxy ─────────────────────────────────────
+# Filtered D-Bus proxy
 # Start a filtered session bus proxy and bind its socket into the sandbox.
 # Must be paired with bwrap_exec.
 bwrap_dbus_filtered() {
@@ -308,7 +310,6 @@ bwrap_dbus_common() {
     bwrap_dbus_filtered "$_arrname" "${rules[@]}"
 }
 
-# ── seccomp filter ───────────────────────────────────────────
 # bwrap_seccomp ARRAYNAME MODE [EXTRA_RULE...]
 #   none     no seccomp filter
 #   default  compile seccomp/default.conf at runtime and cache the result
@@ -345,7 +346,6 @@ bwrap_seccomp() {
     esac
 }
 
-# ── Optional read-only home paths ─────────
 bwrap_themes() {
     local -n _arr=$1
     local p _found=0
@@ -482,7 +482,6 @@ bwrap_resolve_files() {
     return 0
 }
 
-# ── Common home tmpfs skeleton ────────────────────────────────
 bwrap_home_tmpfs() {
     local -n _arr=$1
     _arr+=(
@@ -495,14 +494,12 @@ bwrap_home_tmpfs() {
     )
 }
 
-# ── XDG_RUNTIME_DIR setup ────────────────────────────────────
 bwrap_runtime_dir() {
     local -n _arr=$1
     _arr+=(--perms 0755 --dir /run/user
            --perms 0700 --dir "${XDG_RUNTIME_DIR}")
 }
 
-# ── Common env vars ───────────────────────────────────────────
 bwrap_env_base() {
     local -n _arr=$1
     _arr+=(
@@ -515,7 +512,7 @@ bwrap_env_base() {
     )
 }
 
-# ── Create state dirs on host + bind-mount ────────────────────
+# Create state dirs on host + bind-mount
 bwrap_bind_dir() {
     local -n _arr=$1
     shift
@@ -526,7 +523,6 @@ bwrap_bind_dir() {
     done
 }
 
-# Bind pre-existing dirs read-only
 bwrap_ro_bind_dir() {
     local -n _arr=$1
     shift
@@ -541,7 +537,6 @@ bwrap_ro_bind_dir() {
     :
 }
 
-# ── hardened_malloc ───────────────────────────────────────────
 bwrap_hardened_malloc() {
     local -n _arr=$1
     local _variant="${2:-default}"
@@ -567,7 +562,6 @@ bwrap_no_hardened_malloc() {
     :
 }
 
-# ── Common sandbox flags ─────────────────────────────────────
 bwrap_sandbox() {
     local -n _arr=$1
     local _net="${2:-no}"
@@ -618,7 +612,7 @@ _bwrap_cleanup() {
     _bwrap_args_close_fds
 }
 
-# ── fcitx5 input method ──────────────────────────────────────
+# fcitx5 input method
 _BWRAP_FCITX_FDS=()
 
 # fcitx5 keeps its socket directory under the caller's own name: /tmp/fcitx5-<euid>
@@ -683,7 +677,6 @@ bwrap_fcitx() {
     :
 }
 
-# ── SSH agent forwarding ─────────────────────────────────────
 bwrap_ssh_agent() {
     local -n _arr=$1
     if [[ -n "${SSH_AUTH_SOCK:-}" && -S "${SSH_AUTH_SOCK}" ]]; then
@@ -694,7 +687,6 @@ bwrap_ssh_agent() {
     fi
 }
 
-# ── Standard GUI sandbox: setup phase ─────────────────────────
 # $2 = network: "yes" or "no"
 # $3 = GPU: "yes" or "no"
 # $4 = shm mode: "tmpfs" or "bind"
@@ -718,7 +710,6 @@ bwrap_gui_setup() {
     :
 }
 
-# ── Standard GUI sandbox: finish phase ────────────────────────
 # $4 = malloc: "default", "light", or "no"
 # $5 = dbus mode: "filtered", "unfiltered", or "none"
 # $6 = themes: "yes" or "no"
@@ -761,7 +752,7 @@ bwrap_gui_finish() {
     return 0
 }
 
-# ── bundled arguments ───────────────────────────────────────
+# Bundled arguments
 # Private, array-scoped marker; the --unsetenv pair is a no-op for bwrap.
 _BWRAP_BUNDLED_MARKER='__BWRAP_COMMON_BUNDLED__'
 _BWRAP_ARGS_FDS=()
